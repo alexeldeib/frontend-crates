@@ -72,6 +72,7 @@ fn mock_chunk(
             tool_calls: None,
             function_call: None,
             refusal: None,
+            reasoning: None,
             reasoning_content: None,
         },
         finish_reason: if finish {
