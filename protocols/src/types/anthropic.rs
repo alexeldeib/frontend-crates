@@ -246,7 +246,11 @@ pub enum AnthropicContentBlock {
     },
     /// Image content block.
     #[serde(rename = "image")]
-    Image { source: AnthropicImageSource },
+    Image {
+        source: AnthropicImageSource,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
     /// Tool use request from assistant.
     #[serde(rename = "tool_use")]
     ToolUse {
@@ -371,7 +375,9 @@ impl<'de> Deserialize<'de> for AnthropicContentBlock {
                 let cache_control: Option<CacheControl> = value
                     .get("cache_control")
                     .cloned()
-                    .and_then(|v| serde_json::from_value(v).ok());
+                    .map(serde_json::from_value)
+                    .transpose()
+                    .map_err(serde::de::Error::custom)?;
                 Ok(AnthropicContentBlock::Text {
                     text,
                     citations,
@@ -382,7 +388,16 @@ impl<'de> Deserialize<'de> for AnthropicContentBlock {
                 let source: AnthropicImageSource =
                     serde_json::from_value(value.get("source").cloned().unwrap_or_default())
                         .map_err(serde::de::Error::custom)?;
-                Ok(AnthropicContentBlock::Image { source })
+                let cache_control = value
+                    .get("cache_control")
+                    .cloned()
+                    .map(serde_json::from_value)
+                    .transpose()
+                    .map_err(serde::de::Error::custom)?;
+                Ok(AnthropicContentBlock::Image {
+                    source,
+                    cache_control,
+                })
             }
             "tool_use" => {
                 let id = value
@@ -399,7 +414,9 @@ impl<'de> Deserialize<'de> for AnthropicContentBlock {
                 let cache_control: Option<CacheControl> = value
                     .get("cache_control")
                     .cloned()
-                    .and_then(|v| serde_json::from_value(v).ok());
+                    .map(serde_json::from_value)
+                    .transpose()
+                    .map_err(serde::de::Error::custom)?;
                 Ok(AnthropicContentBlock::ToolUse {
                     id,
                     name,
@@ -421,7 +438,9 @@ impl<'de> Deserialize<'de> for AnthropicContentBlock {
                 let cache_control: Option<CacheControl> = value
                     .get("cache_control")
                     .cloned()
-                    .and_then(|v| serde_json::from_value(v).ok());
+                    .map(serde_json::from_value)
+                    .transpose()
+                    .map_err(serde::de::Error::custom)?;
                 Ok(AnthropicContentBlock::ToolResult {
                     tool_use_id,
                     content,
@@ -443,7 +462,9 @@ impl<'de> Deserialize<'de> for AnthropicContentBlock {
                 let cache_control: Option<CacheControl> = value
                     .get("cache_control")
                     .cloned()
-                    .and_then(|v| serde_json::from_value(v).ok());
+                    .map(serde_json::from_value)
+                    .transpose()
+                    .map_err(serde::de::Error::custom)?;
                 Ok(AnthropicContentBlock::Thinking {
                     thinking,
                     signature,
@@ -913,6 +934,14 @@ mod tests {
         assert!(
             serde_json::from_value::<CacheControl>(serde_json::json!({
                 "type": "persistent"
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<AnthropicContentBlock>(serde_json::json!({
+                "type": "text",
+                "text": "cache me",
+                "cache_control": {"type": "ephemeral", "ttl": "600"}
             }))
             .is_err()
         );
