@@ -55,6 +55,39 @@ pub type PromptConfig = Prompt;
 pub type TextConfig = ResponseTextParam;
 pub type TextResponseFormat = TextResponseFormatConfiguration;
 
+/// Request-wide prompt caching options for current OpenAI models.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct PromptCacheOptions {
+    #[serde(default)]
+    pub mode: PromptCacheMode,
+    #[serde(default)]
+    pub ttl: PromptCacheTtl,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum PromptCacheMode {
+    #[default]
+    Implicit,
+    Explicit,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PromptCacheTtl {
+    #[default]
+    #[serde(rename = "30m")]
+    ThirtyMinutes,
+}
+
+impl PromptCacheTtl {
+    pub const fn seconds(self) -> u32 {
+        match self {
+            Self::ThirtyMinutes => 30 * 60,
+        }
+    }
+}
+
 /// Stream of response events.
 pub type ResponseStream = std::pin::Pin<
     Box<dyn futures::Stream<Item = Result<ResponseStreamEvent, crate::error::OpenAIError>> + Send>,
@@ -427,6 +460,8 @@ pub struct CreateResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_cache_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_options: Option<PromptCacheOptions>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_cache_retention: Option<PromptCacheRetention>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<Reasoning>,
@@ -516,6 +551,35 @@ mod tests {
         let req: CreateResponse =
             serde_json::from_value(serde_json::json!({"input": "hi"})).unwrap();
         assert!(req.tool_choice.is_none());
+    }
+
+    #[test]
+    fn prompt_cache_options_use_current_defaults() {
+        let req: CreateResponse = serde_json::from_value(serde_json::json!({
+            "input": "hi",
+            "prompt_cache_options": {}
+        }))
+        .unwrap();
+        let options = req.prompt_cache_options.unwrap();
+        assert_eq!(options.mode, PromptCacheMode::Implicit);
+        assert_eq!(options.ttl.seconds(), 1800);
+    }
+
+    #[test]
+    fn prompt_cache_options_reject_unknown_fields_and_values() {
+        for options in [
+            serde_json::json!({"ttl_seconds": 1800}),
+            serde_json::json!({"ttl": "1h"}),
+            serde_json::json!({"mode": "automatic"}),
+        ] {
+            assert!(
+                serde_json::from_value::<CreateResponse>(serde_json::json!({
+                    "input": "hi",
+                    "prompt_cache_options": options
+                }))
+                .is_err()
+            );
+        }
     }
 
     // ---- reasoning item echoed back without id/summary (#10963 CASE 2) ----

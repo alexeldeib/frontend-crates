@@ -8,14 +8,14 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Anthropic-style cache control hint for prefix pinning with TTL.
+/// Anthropic cache control marker.
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 pub struct CacheControl {
     #[serde(rename = "type")]
     pub control_type: CacheControlType,
-    /// TTL as seconds (integer) or shorthand ("5m" = 300s, "1h" = 3600s). Clamped to [300, 3600].
+    /// Cache lifetime. Anthropic currently accepts only `5m` and `1h`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ttl: Option<String>,
+    pub ttl: Option<CacheControlTtl>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
@@ -23,33 +23,23 @@ pub struct CacheControl {
 pub enum CacheControlType {
     #[default]
     Ephemeral,
-    #[serde(other)]
-    Unknown,
 }
 
-const MIN_TTL_SECONDS: u64 = 300;
-const MAX_TTL_SECONDS: u64 = 3600;
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+pub enum CacheControlTtl {
+    #[serde(rename = "5m")]
+    FiveMinutes,
+    #[serde(rename = "1h")]
+    OneHour,
+}
 
 impl CacheControl {
-    /// Parse TTL string to seconds, clamped to [300, 3600].
-    ///
-    /// Accepts integer seconds ("120", "600") or shorthand ("5m", "1h").
-    /// Values below 300 are clamped to 300; values above 3600 are clamped to 3600.
-    /// Unrecognized strings default to 300s.
+    /// Return the requested cache lifetime in seconds.
     pub fn ttl_seconds(&self) -> u64 {
-        let raw = match self.ttl.as_deref() {
-            None => return MIN_TTL_SECONDS,
-            Some("5m") => 300,
-            Some("1h") => 3600,
-            Some(other) => match other.parse::<u64>() {
-                Ok(secs) => secs,
-                Err(_) => {
-                    tracing::warn!("Unrecognized TTL '{}', defaulting to 300s", other);
-                    return MIN_TTL_SECONDS;
-                }
-            },
-        };
-        raw.clamp(MIN_TTL_SECONDS, MAX_TTL_SECONDS)
+        match self.ttl {
+            None | Some(CacheControlTtl::FiveMinutes) => 300,
+            Some(CacheControlTtl::OneHour) => 3600,
+        }
     }
 }
 /// Parsed system prompt content, preserving cache_control from block arrays.
@@ -897,5 +887,34 @@ mod tests {
         let nvext = request.nvext.expect("opaque nvext value");
         assert_eq!(nvext["unknown_future_extension"]["nested"], true);
         assert_eq!(nvext["agent_context"]["trajectory_id"], 7);
+    }
+
+    #[test]
+    fn cache_control_accepts_only_documented_ttls() {
+        let default: CacheControl =
+            serde_json::from_value(serde_json::json!({"type": "ephemeral"})).unwrap();
+        assert_eq!(default.ttl_seconds(), 300);
+
+        let one_hour: CacheControl = serde_json::from_value(serde_json::json!({
+            "type": "ephemeral",
+            "ttl": "1h",
+            "scope": "global"
+        }))
+        .unwrap();
+        assert_eq!(one_hour.ttl_seconds(), 3600);
+
+        assert!(
+            serde_json::from_value::<CacheControl>(serde_json::json!({
+                "type": "ephemeral",
+                "ttl": "600"
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<CacheControl>(serde_json::json!({
+                "type": "persistent"
+            }))
+            .is_err()
+        );
     }
 }
