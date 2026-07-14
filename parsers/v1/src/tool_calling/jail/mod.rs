@@ -152,6 +152,232 @@ pub enum ToolChoiceFormat {
     ArrayOfTools,
 }
 
+#[derive(Debug, Clone)]
+struct JsonValueStream {
+    next_offset: usize,
+    started: bool,
+    container_depth: usize,
+    in_string: bool,
+    escape: bool,
+    scalar: bool,
+    complete: bool,
+}
+
+impl JsonValueStream {
+    fn new(next_offset: usize) -> Self {
+        Self {
+            next_offset,
+            started: false,
+            container_depth: 0,
+            in_string: false,
+            escape: false,
+            scalar: false,
+            complete: false,
+        }
+    }
+
+    fn push(&mut self, content: &str) -> String {
+        if self.complete || self.next_offset >= content.len() {
+            return String::new();
+        }
+
+        let bytes = content.as_bytes();
+        let mut offset = self.next_offset;
+        while offset < bytes.len() && !self.started && bytes[offset].is_ascii_whitespace() {
+            offset += 1;
+        }
+        let fragment_start = offset;
+
+        while offset < bytes.len() {
+            let byte = bytes[offset];
+            if !self.started {
+                self.started = true;
+                match byte {
+                    b'{' | b'[' => self.container_depth = 1,
+                    b'"' => self.in_string = true,
+                    _ => self.scalar = true,
+                }
+                offset += 1;
+                continue;
+            }
+
+            if self.scalar {
+                if byte.is_ascii_whitespace() || matches!(byte, b',' | b'}' | b']') {
+                    self.complete = true;
+                    break;
+                }
+                offset += 1;
+                continue;
+            }
+
+            if self.in_string {
+                if self.escape {
+                    self.escape = false;
+                } else if byte == b'\\' {
+                    self.escape = true;
+                } else if byte == b'"' {
+                    self.in_string = false;
+                    if self.container_depth == 0 {
+                        self.complete = true;
+                    }
+                }
+                offset += 1;
+                if self.complete {
+                    break;
+                }
+                continue;
+            }
+
+            match byte {
+                b'"' => self.in_string = true,
+                b'{' | b'[' => self.container_depth += 1,
+                b'}' | b']' => {
+                    self.container_depth = self.container_depth.saturating_sub(1);
+                    if self.container_depth == 0 {
+                        self.complete = true;
+                    }
+                }
+                _ => {}
+            }
+            offset += 1;
+            if self.complete {
+                break;
+            }
+        }
+
+        self.next_offset = offset;
+        content[fragment_start..offset].to_string()
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct ImmediateToolCallStream {
+    search_offset: usize,
+    name: Option<String>,
+    arguments: Option<JsonValueStream>,
+    call_open: bool,
+    streamed_calls: usize,
+}
+
+impl ImmediateToolCallStream {
+    fn push(
+        &mut self,
+        content: &str,
+        format: &ToolChoiceFormat,
+    ) -> Vec<ChatCompletionMessageToolCallChunk> {
+        let mut deltas = Vec::new();
+
+        loop {
+            match format {
+                // A named choice normally emits a bare parameter object, but some
+                // backends still emit a wrapped {name, parameters} call. Keep it
+                // buffered so the existing named-tool filter can reject mismatches.
+                ToolChoiceFormat::SingleObject { .. } => break,
+                ToolChoiceFormat::ArrayOfTools => {
+                    if self.name.is_none() {
+                        self.name = find_json_string_field(content, self.search_offset, "name");
+                    }
+                    if self.arguments.is_none()
+                        && let Some(offset) = find_json_value_field(content, self.search_offset)
+                    {
+                        self.arguments = Some(JsonValueStream::new(offset));
+                    }
+                    if self.name.is_none() || self.arguments.is_none() {
+                        break;
+                    }
+                }
+            }
+
+            let arguments = self.arguments.as_mut().expect("arguments initialized");
+            let fragment = arguments.push(content);
+            if !fragment.is_empty() {
+                let first = !self.call_open;
+                if first {
+                    self.call_open = true;
+                    self.streamed_calls += 1;
+                }
+                deltas.push(ChatCompletionMessageToolCallChunk {
+                    index: (self.streamed_calls - 1) as u32,
+                    id: first.then(|| format!("call-{}", Uuid::new_v4())),
+                    r#type: first.then_some(FunctionType::Function),
+                    function: Some(FunctionCallStream {
+                        name: first.then(|| self.name.clone()).flatten(),
+                        arguments: Some(fragment),
+                    }),
+                });
+            }
+
+            if !arguments.complete {
+                break;
+            }
+
+            self.search_offset = arguments.next_offset;
+            self.name = None;
+            self.arguments = None;
+            self.call_open = false;
+        }
+
+        deltas
+    }
+}
+
+fn json_string_end(content: &str, start: usize) -> Option<usize> {
+    let bytes = content.as_bytes();
+    if bytes.get(start) != Some(&b'"') {
+        return None;
+    }
+    let mut escape = false;
+    for (offset, byte) in bytes.iter().enumerate().skip(start + 1) {
+        if escape {
+            escape = false;
+        } else if *byte == b'\\' {
+            escape = true;
+        } else if *byte == b'"' {
+            return Some(offset + 1);
+        }
+    }
+    None
+}
+
+fn find_json_field(content: &str, start: usize, field: &str) -> Option<usize> {
+    let bytes = content.as_bytes();
+    let mut offset = start.min(bytes.len());
+    while offset < bytes.len() {
+        if bytes[offset] != b'"' {
+            offset += 1;
+            continue;
+        }
+        let end = json_string_end(content, offset)?;
+        let key: String = serde_json::from_str(&content[offset..end]).ok()?;
+        let mut colon = end;
+        while colon < bytes.len() && bytes[colon].is_ascii_whitespace() {
+            colon += 1;
+        }
+        if bytes.get(colon) == Some(&b':') && key == field {
+            let mut value = colon + 1;
+            while value < bytes.len() && bytes[value].is_ascii_whitespace() {
+                value += 1;
+            }
+            return (value < bytes.len()).then_some(value);
+        }
+        offset = end;
+    }
+    None
+}
+
+fn find_json_string_field(content: &str, start: usize, field: &str) -> Option<String> {
+    let value = find_json_field(content, start, field)?;
+    let end = json_string_end(content, value)?;
+    serde_json::from_str(&content[value..end]).ok()
+}
+
+fn find_json_value_field(content: &str, start: usize) -> Option<usize> {
+    ["parameters", "arguments"]
+        .into_iter()
+        .filter_map(|field| find_json_field(content, start, field))
+        .min()
+}
+
 /// State tracking for an individual choice during jail processing
 #[derive(Debug, Clone)]
 struct ChoiceJailState {
@@ -176,6 +402,10 @@ struct ChoiceJailState {
     /// Incremental lexical progress used to decide when parser validation is
     /// worthwhile. Parser acceptance is never cached here.
     completion_progress: JailCompletionProgress,
+    /// Required tool choices are guided-decoded bare JSON. Keep a request-local
+    /// projection of their argument value so it can be forwarded incrementally
+    /// while the full jail buffer remains available for validation.
+    immediate_tool_stream: Option<ImmediateToolCallStream>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -420,7 +650,56 @@ impl ChoiceJailState {
             emitted_tool_calls_count: 0,
             pending_reasoning_content: None,
             completion_progress: JailCompletionProgress::default(),
+            immediate_tool_stream: None,
         }
+    }
+
+    fn stream_immediate_tool_calls(
+        &mut self,
+        choice: &ChatChoiceStream,
+        jail_stream: &JailedStream,
+        emissions: &mut Vec<ChoiceEmission>,
+    ) {
+        let JailMode::Immediate { format } = &jail_stream.jail_mode else {
+            return;
+        };
+        let deltas = self
+            .immediate_tool_stream
+            .get_or_insert_with(ImmediateToolCallStream::default)
+            .push(&self.accumulated_content, format);
+        for delta in deltas {
+            #[allow(deprecated)]
+            let tool_choice = ChatChoiceStream {
+                index: choice.index,
+                delta: ChatCompletionStreamResponseDelta {
+                    role: choice.delta.role,
+                    content: None,
+                    tool_calls: Some(vec![delta]),
+                    function_call: None,
+                    refusal: None,
+                    reasoning_content: None,
+                },
+                finish_reason: choice.finish_reason,
+                logprobs: choice.logprobs.clone(),
+            };
+            emissions.push(ChoiceEmission::ToolCall(tool_choice));
+        }
+    }
+
+    fn streamed_immediate_call_count(&self) -> usize {
+        self.immediate_tool_stream
+            .as_ref()
+            .map_or(0, |state| state.streamed_calls)
+    }
+
+    fn suppresses_completed_immediate_replay(&self, choice: &ChatChoiceStream) -> bool {
+        let streamed = self.streamed_immediate_call_count();
+        streamed > 0
+            && choice
+                .delta
+                .tool_calls
+                .as_ref()
+                .is_some_and(|calls| calls.len() == streamed)
     }
 
     fn begin_jail(&mut self, content: String, logprobs: Option<ChatChoiceLogprobs>) {
@@ -624,6 +903,13 @@ impl ChoiceJailState {
             .await;
         unjailed_choice.logprobs = jail_logprobs;
 
+        if self.suppresses_completed_immediate_replay(&unjailed_choice) {
+            self.emitted_tool_calls_count = self.streamed_immediate_call_count();
+            self.end_jail();
+            self.handle_trailing_content(&trailing_owned, choice, jail_stream, emissions);
+            return;
+        }
+
         if let Some(ref tool_calls) = unjailed_choice.delta.tool_calls {
             self.emitted_tool_calls_count += tool_calls.len();
             emissions.push(ChoiceEmission::ToolCall(unjailed_choice));
@@ -775,6 +1061,7 @@ impl ChoiceJailState {
         } else {
             // Already jailed - accumulate content AND logprobs, then check for unjail
             self.accumulate(content, choice.logprobs.as_ref());
+            self.stream_immediate_tool_calls(choice, jail_stream, &mut emissions);
 
             let completion = jail_stream
                 .check_jail_completion(&self.accumulated_content, &mut self.completion_progress)
@@ -823,6 +1110,11 @@ impl ChoiceJailState {
                 } else {
                     final_choice.delta.reasoning_content = Some(pending_reasoning);
                 }
+            }
+
+            if self.suppresses_completed_immediate_replay(&final_choice) {
+                final_choice.delta.tool_calls = None;
+                final_choice.delta.content = None;
             }
 
             if let Some(ref tool_calls) = final_choice.delta.tool_calls {

@@ -3805,6 +3805,123 @@ fahrenheit
         }
     }
 
+    #[tokio::test]
+    async fn test_tool_choice_required_streams_argument_fragments() {
+        let input_chunks = [
+            "[{\"name\":\"save_note\",\"parameters\":{\"content\":\"",
+            "A brace in a string: { and an escaped quote: \\\"",
+            " still belongs to the argument.\"",
+            "}}]",
+        ]
+        .into_iter()
+        .map(|content| test_utils::create_mock_response_chunk(content.to_string(), 0))
+        .chain(std::iter::once(test_utils::create_final_response_chunk(0)));
+
+        let results: Vec<_> = apply_tool_calling_jail(
+            Some("glm47".to_string()),
+            Some(ChatCompletionToolChoiceOption::Required),
+            None,
+            false,
+            stream::iter(input_chunks),
+        )
+        .collect()
+        .await;
+
+        let tool_deltas: Vec<_> = results
+            .iter()
+            .flat_map(|response| response.data.iter())
+            .flat_map(|response| response.choices.iter())
+            .flat_map(|choice| choice.delta.tool_calls.iter().flatten())
+            .collect();
+        let argument_deltas: Vec<_> = tool_deltas
+            .iter()
+            .filter_map(|call| call.function.as_ref()?.arguments.as_deref())
+            .filter(|arguments| !arguments.is_empty())
+            .collect();
+
+        assert!(
+            argument_deltas.len() > 1,
+            "required tool arguments should stream incrementally: {argument_deltas:?}"
+        );
+        let arguments = argument_deltas.concat();
+        let parsed_arguments = serde_json::from_str::<serde_json::Value>(&arguments)
+            .unwrap_or_else(|error| panic!("invalid streamed arguments {arguments:?}: {error}"));
+        assert_eq!(
+            parsed_arguments,
+            json!({
+                "content": "A brace in a string: { and an escaped quote: \" still belongs to the argument."
+            })
+        );
+        assert_eq!(
+            tool_deltas
+                .iter()
+                .filter_map(|call| call.function.as_ref()?.name.as_deref())
+                .collect::<Vec<_>>(),
+            ["save_note"]
+        );
+        assert!(
+            results
+                .iter()
+                .any(|response| response.data.as_ref().is_some_and(|data| data
+                    .choices
+                    .iter()
+                    .any(|choice| { choice.finish_reason == Some(FinishReason::ToolCalls) }))),
+            "required tool stream should terminate with tool_calls"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_tool_choice_required_streams_parallel_call_indices() {
+        let input_chunks = [
+            "[{\"name\":\"first\",\"parameters\":{\"value\":\"",
+            "one\"}},{\"name\":\"second\",\"arguments\":{\"values\":[1,",
+            "2]}}]",
+        ]
+        .into_iter()
+        .map(|content| test_utils::create_mock_response_chunk(content.to_string(), 0))
+        .chain(std::iter::once(test_utils::create_final_response_chunk(0)));
+
+        let results: Vec<_> = apply_tool_calling_jail(
+            None,
+            Some(ChatCompletionToolChoiceOption::Required),
+            None,
+            false,
+            stream::iter(input_chunks),
+        )
+        .collect()
+        .await;
+
+        let mut calls = std::collections::BTreeMap::<u32, (String, String)>::new();
+        for call in results
+            .iter()
+            .flat_map(|response| response.data.iter())
+            .flat_map(|response| response.choices.iter())
+            .flat_map(|choice| choice.delta.tool_calls.iter().flatten())
+        {
+            let entry = calls.entry(call.index).or_default();
+            if let Some(function) = &call.function {
+                if let Some(name) = &function.name {
+                    entry.0 = name.clone();
+                }
+                if let Some(arguments) = &function.arguments {
+                    entry.1.push_str(arguments);
+                }
+            }
+        }
+
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[&0].0, "first");
+        assert_eq!(calls[&1].0, "second");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&calls[&0].1).unwrap(),
+            json!({"value": "one"})
+        );
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&calls[&1].1).unwrap(),
+            json!({"values": [1, 2]})
+        );
+    }
+
     /// MiniMax recovers complete inner invokes even when the outer wrapper is
     /// damaged. Incomplete paired XML fences still do not recover a call, and
     /// the jail must not surface raw MiniMax protocol markers as content.
