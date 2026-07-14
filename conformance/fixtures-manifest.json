@@ -1,12 +1,12 @@
 {
-  "snapshot": "20260714_104638",
-  "created_pt": "2026-07-14 10:46:38 America/Los_Angeles",
+  "snapshot": "20260714_112819",
+  "created_pt": "2026-07-14 11:28:19 America/Los_Angeles",
   "hf_repo": "ai-dynamo/conformance-fixtures",
-  "all_tarball": "all-20260714_104638.tar.gz",
-  "all_sha256": "25dafbb3dc327dba3f1d1cbafd320096b28ffb4f70daf4009ca2236345cdb4c3",
+  "all_tarball": "all-20260714_112819.tar.gz",
+  "all_sha256": "460d7c9591807dd2ebaebb13d55d817363cae03694a777baf31b791ba75b9307",
   "crates": {
-    "dynamo-parsers": "5.0.0",
-    "dynamo-parsers-v2": "0.1.19"
+    "dynamo-parsers": "5.1.0",
+    "dynamo-parsers-v2": "0.1.21"
   },
   "peers": {
     "vllm": "0.24.0",
@@ -100,8 +100,8 @@
     },
     {
       "path": "toolcalling/fixtures-batch-on-stream-v2.tar.gz",
-      "sha256": "6a235386fb6621824dd8f32d021e154ceb77d9f9b1d5a126e06ad1aca433fa64",
-      "size": 14689
+      "sha256": "3bfdf193f86059fc413ffb5cd9eb186043e6c90205b801dbb73c01163ce87a5e",
+      "size": 15177
     }
   ]
 }

@@ -262,8 +262,8 @@ def refresh_batch_on_stream(v2_ver: str) -> None:
     batch_inputs = ensure_tree("fixtures-batch-v1") / "inputs"
     for family in V2_FAMILIES:
         fam_dir = tree / family
-        if not fam_dir.is_dir() or not (batch_inputs / family).is_dir():
-            print(f"[batch-on-stream] {family}: no tree/inputs, skipped")
+        if not (batch_inputs / family).is_dir():
+            print(f"[batch-on-stream] {family}: no batch inputs, skipped")
             continue
         rec = json.loads(
             run_bin(
@@ -272,6 +272,33 @@ def refresh_batch_on_stream(v2_ver: str) -> None:
                 ["--family", family, "--root", str(batch_inputs)],
             )
         )
+        if not fam_dir.is_dir():
+            # First capture for this family (e.g. a newly registered v2 parser):
+            # create the dir from the batch inputs' file layout, Dynamo-only.
+            # Peer keys stay absent — the peers were never captured on
+            # batch-on-stream for this family (needs engine containers) and the
+            # renderer shows an absent impl as unavailable, not as clean output.
+            for src in sorted((batch_inputs / family).glob("TOOLCALLING.batch*.yaml")):
+                src_doc = yaml.safe_load(src.read_text())
+                if src_doc.get("mode") != "batch":
+                    continue
+                cases = {
+                    cid: {"dynamo_rust": rec[cid]}
+                    for cid in (src_doc.get("cases") or {})
+                    if cid in rec
+                }
+                if not cases:
+                    continue
+                doc = {
+                    "family": family,
+                    "mode": "batch-on-stream",
+                    "captured_with": {"dynamo_rust": v2_ver},
+                    "cases": cases,
+                }
+                fam_dir.mkdir(parents=True, exist_ok=True)
+                (fam_dir / src.name).write_text(dump_yaml(doc))
+            print(f"[batch-on-stream] {family}: created dir, recorded {len(rec)} cases")
+            continue
         for fp in sorted(fam_dir.glob("TOOLCALLING.batch*.yaml")):
             doc = yaml.safe_load(fp.read_text())
             changed = False
