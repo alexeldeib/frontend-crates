@@ -1,9 +1,9 @@
 {
-  "snapshot": "20260713_194817",
-  "created_pt": "2026-07-13 19:48:17 America/Los_Angeles",
+  "snapshot": "20260714_104638",
+  "created_pt": "2026-07-14 10:46:38 America/Los_Angeles",
   "hf_repo": "ai-dynamo/conformance-fixtures",
-  "all_tarball": "all-20260713_194817.tar.gz",
-  "all_sha256": "522e8bbc3743e228a1af2d844d6b92ba717f2e8bc3b9e34b4bc0cae774584aa8",
+  "all_tarball": "all-20260714_104638.tar.gz",
+  "all_sha256": "25dafbb3dc327dba3f1d1cbafd320096b28ffb4f70daf4009ca2236345cdb4c3",
   "crates": {
     "dynamo-parsers": "5.0.0",
     "dynamo-parsers-v2": "0.1.19"
@@ -15,8 +15,8 @@
   "shards": [
     {
       "path": "toolcalling/fixtures-batch-v1/dynamo-5.0.0.tar.gz",
-      "sha256": "c60b9d993b0164873cf245f0c993cd3b5e32a71b57306353f08b8d1c70d42302",
-      "size": 10017
+      "sha256": "f44d6c3753731e6bbdb104ea1f29f344fded53c75001bf3c4afbcaae3531ebda",
+      "size": 10012
     },
     {
       "path": "toolcalling/fixtures-batch-v1/inputs.tar.gz",
@@ -45,13 +45,13 @@
     },
     {
       "path": "toolcalling/fixtures-stream-v2/dynamo_rust-0.1.19.tar.gz",
-      "sha256": "6353f2e56d4d41f7c7859dbe8bebb77002ee619bacdf00cb075ef10555a38849",
-      "size": 5374
+      "sha256": "711cc0bbe263a1127f956c4cedcf90bd54eef803e5f4aa4b5d951755b14351e5",
+      "size": 5742
     },
     {
       "path": "toolcalling/fixtures-stream-v2/dynamo_rust-5.0.0.tar.gz",
-      "sha256": "94f8dc6e686c0f8203bd8111bd6678b76992dabebea877aa766fc5d6ce3d8e32",
-      "size": 10871
+      "sha256": "6da73e21478da8125b1b6fece9a6102ed869b42e3090130d38c29f91482d3af3",
+      "size": 10693
     },
     {
       "path": "toolcalling/fixtures-stream-v2/inputs.tar.gz",
