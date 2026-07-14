@@ -62,6 +62,7 @@ from __future__ import annotations
 import argparse
 import copy
 import datetime
+import functools
 import html as html_lib
 import json
 import os
@@ -2263,6 +2264,30 @@ def _stream_candidate_items() -> list[dict[str, str]]:
     return out
 
 
+@functools.lru_cache(maxsize=1)
+def _stream_divergence_notes() -> dict:
+    """Hand-maintained sidecar notes for known Dynamo v2-vs-jail stream
+    divergences (conformance/toolcalling/stream-divergence-explanations.yaml,
+    read from the REAL repo root via FRONTEND_CRATES_ROOT — this module runs
+    from the staged copy). Applied at render time so the notes survive capture
+    re-records. {family: {case_id: {"v2"|"jail": note}}}."""
+    root = os.environ.get("FRONTEND_CRATES_ROOT")
+    if not root:
+        return {}
+    path = Path(root) / "conformance/toolcalling/stream-divergence-explanations.yaml"
+    if not path.exists():
+        return {}
+    return yaml.safe_load(path.read_text()) or {}
+
+
+def _stream_divergence_note(family: str, case_id: str, version: str) -> str | None:
+    """The sidecar note for one (family, case, dynamo candidate) — candidate
+    resolved by version generation: 0.x = the v2 stream parser, anything else =
+    the v1 jail reference."""
+    gen = "v2" if _dynamo_vtag(version) == "v2" else "jail"
+    return ((_stream_divergence_notes().get(family) or {}).get(case_id) or {}).get(gen)
+
+
 def _stream_version_families(impl: str, version: str) -> set[str] | None:
     """Families the `<impl>-<version>` stream fixture dir actually holds — the
     authoritative coverage for that parser build. `None` if the dir is absent (don't
@@ -2363,6 +2388,15 @@ def _stream_version_status_map() -> dict[tuple[str, str], dict[str, dict[str, di
                     })
             if covered is not None and case.get("__family") not in covered:
                 block, status, vchunks = None, "na", None
+            # Attach the hand-maintained sidecar note for a KNOWN v2-vs-jail
+            # divergence to this candidate's block, so the popup explains the Δ
+            # and the cell drops its `?` research-needed suffix.
+            if impl == BASELINE_IMPL and isinstance(block, dict):
+                note = _stream_divergence_note(
+                    case.get("__family") or key[0], case.get("__case_id") or "", version
+                )
+                if note:
+                    block = {**block, "explanation": note}
             # Aligned = the raw capture recorded one row per INPUT chunk, so a row
             # index is real consumer-visible timing. The v1 jail captures are
             # emission-packed (fewer rows than inputs) — timing NOT recorded.

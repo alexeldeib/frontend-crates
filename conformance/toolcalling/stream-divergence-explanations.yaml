@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Hand-maintained explanations for KNOWN divergences between the two Dynamo
+# stream-tab candidates (v2 stream parser vs the v1 jail+batch reference).
+#
+# Applied at RENDER time (generate_conformance_table reads this via
+# FRONTEND_CRATES_ROOT), never written into the recorded capture YAMLs — so the
+# notes survive every `refresh_dynamo_captures.py` / `capture_dynamo_jail_stream.py`
+# re-record. The popup shows the note as a muted `explanation:` annotation on
+# that candidate's column, and the cell loses its `?` research-needed suffix.
+#
+# Do NOT add entries for un-triaged defects: a divergence without an
+# explanation renders `?` (research needed), which is the correct signal.
+# Example of a deliberate omission: gemma4 TOOLCALLING.streamv2.5.g, where the
+# v1 jail corrupts the recovered prose ("I will checkthat.") — that is a jail
+# bug to fix, not a behavior to document away.
+#
+# Schema: family -> case id -> candidate generation -> note.
+#   v2   = the Dynamo v2 stream capture (dynamo_rust-0.x dir)
+#   jail = the Dynamo v1 jail+batch reference (dynamo_rust-<v1 major> dir)
+
+qwen3_coder:
+  TOOLCALLING.streamv2.5.e:
+    v2: >-
+      Both trailing spaces are model text: one ends the prose before the first
+      block, one separates "</tool_call>" from the truncated second
+      "<tool_call>". The stream parser emitted the inter-block space the moment
+      the first block closed and cannot retroactively unsend it when the next
+      block turns out truncated; the jail sees the whole tail before emitting
+      and swallows that space with the dropped block.
