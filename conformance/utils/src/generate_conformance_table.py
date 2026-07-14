@@ -30,7 +30,7 @@ Cell markers (Dynamo Rust + vLLM Rust + vLLM Python + SGLang):
   V_rs      vLLM Rust stream parser output diverges from the selected parser; no V_rb exists
   S_rb      SGLang batch parser output diverges from the selected parser
   S_rs      SGLang stream parser output diverges from the selected parser
-  ?         suffix means the divergent block has no `reason:` yet
+  ?         suffix means the divergent block has no `explanation:` yet
         (research-needed; we observed it but haven't classified it)
   !         suffix means the parser has `error: <substring>` (expected to crash)
   Combined markers, for example V_pbS_rb, mean multiple implementations diverge
@@ -130,6 +130,7 @@ from markers import (  # noqa: E402,F401
     _canonical_tool_output,
     _dynamo_tool_call_leak,
     _expected,
+    _explanation,
     _impl_get,
     _impl_keys_for_output_kind,
     _impl_mode_label_html,
@@ -544,7 +545,7 @@ def cell_for(
         elif kind == "err":
             parts.append(f"{letter}!")
 
-    # `reason:` on the `expected.dynamo_rust` block flags Dynamo parser v2 output as
+    # `explanation:` on the `expected.dynamo_rust` block flags Dynamo parser v2 output as
     # leaking tool call markup only when it also leaves residual
     # `normal_text`. The Dynamo parser v2 can have non-leak reasons for dropped malformed
     # markup, so don't mark those as `↯`.
@@ -587,14 +588,13 @@ _LEGEND_MD = (
     "`V_rs` (vLLM Rust stream parser; no `V_rb` exists) · "
     "`S_rb` (SGLang batch parser) · "
     "`S_rs` (SGLang stream parser) · "
-    "a marker means that implementation diverges from the selected parser output; intentional divergences have `reason:` · "
-    "`?` research-needed suffix (e.g. V_pb?, S_rs? — diverges with no `reason:` yet) · "
+    "a marker means that implementation diverges from the selected parser output; intentional divergences have `explanation:` · "
+    "`?` research-needed suffix (e.g. V_pb?, S_rs? — diverges with no `explanation:` yet) · "
     "`↯` selected parser leaks tool call markup into `normal_text` "
     "(captured peer output can legitimately show imperfect engine behavior) · "
     "`!` expected-error suffix (e.g. V_pb!, S_rs! — engine crashes by design) · "
     "`✗` engine parser ran but failed to parse this input (recorded as `unavailable: … parser not captured: …`); distinct from `n/a` (not run) · "
-    "`…` Dynamo parser v2 not yet implemented for this row (TODO) · "
-    "`n/a` not applicable · "
+    "`n/a` not applicable (includes families the Dynamo v2 stream parser doesn't implement) · "
     "`—` missing fixture coverage · "
     "`†` (tool calling parser column) = no vLLM Python peer parser for this family · "
     "`§` (tool calling parser column) = no SGLang peer parser for this family."
@@ -625,26 +625,13 @@ def _common_legend_html(
     return (
         "<p><strong>Legend:</strong></p>"
         '<ul class="marker-defs">'
-        '<li><strong>v1</strong> means the stable batch parser crate (<code>parsers/v1/src/...</code>, published as <code>dynamo-parsers</code>); <strong>v2</strong> means the WIP streaming parser crate (<code>parsers/v2/src/...</code>, <code>dynamo-parsers-v2</code>).</li>'
-        '<li><span style="color:#0a7d2c">=</span> all captured peers match Dynamo Rust.</li>'
-        '<li><span style="color:#8b949e">·</span> Dynamo Rust-only fixture (peers unavailable or not captured).</li>'
-        f'<li><span style="color:#555">{_marker_html("D_rb")}</span> Dynamo Rust batch parser.</li>'
-        f'<li><span style="color:#555">{_marker_html("D_rs")}</span> Dynamo Rust stream parser.</li>'
-        f'<li><span style="color:#555">{_marker_html("V_pb")}</span> vLLM Python batch parser.</li>'
-        f'<li><span style="color:#555">{_marker_html("V_ps")}</span> vLLM Python stream parser.</li>'
-        f'<li><span style="color:#555">{_marker_html("V_rs")}</span> vLLM Rust stream parser; no <code>V_rb</code> exists.</li>'
-        f'<li><span style="color:#555">{_marker_html("S_rb")}</span> SGLang batch parser.</li>'
-        f'<li><span style="color:#555">{_marker_html("S_rs")}</span> SGLang stream parser.</li>'
-        '<li>A marker means that implementation diverges from the selected parser output; intentional divergences have <code>reason:</code>.</li>'
-        f'<li><span style="color:#b00">?</span> more research needed, for example {_marker_html("V_pb")}? or {_marker_html("S_rs")}? diverges with no <code>reason:</code> yet.</li>'
-        '<li><span style="color:#b00">↯</span> selected parser leaks tool call markup into <code>normal_text</code>; captured peer output can legitimately show imperfect engine behavior.</li>'
-        f'<li><span style="color:#b00">!</span> expected-error suffix, for example {_marker_html("V_pb")}! or {_marker_html("S_rs")}! means the engine crashes by design.</li>'
-        '<li><span style="color:#b00">✗</span> the engine parser ran but <strong>failed to parse</strong> this input (recorded as <code>unavailable: … parser not captured: …</code>); distinct from <span style="color:#aaa">n/a</span> (not run).</li>'
-        '<li><span style="color:#aaa">n/a</span> not applicable.</li>'
+        '<li><span style="color:#0a7d2c"><strong>green</strong></span> = the selected <strong>Reference</strong> parser output is clean — no structured markup (tool-call or reasoning) leaked into the visible <code>normal_text</code>. A clean Reference is green whether or not any Compare parser is selected.</li>'
+        '<li><span style="color:#b00"><strong>red</strong> (↯)</span> = the Reference parser leaks structured markup (tool-call or reasoning) into the visible <code>normal_text</code>.</li>'
+        '<li><span style="color:#aaa"><strong>n/a</strong></span> = the selected Reference is not applicable for this case (for example the Dynamo v2 stream parser is not implemented for this family).</li>'
         '<li><span style="color:#8a6d3b">—</span> missing fixture coverage.</li>'
-        '<li><span class="parser-suffix">†</span> no vLLM Python peer parser for this family.</li>'
-        '<li><span class="parser-suffix">§</span> no SGLang peer parser for this family.</li>'
-        '<li><span class="parser-suffix">‡</span> Nemotron V3 (Ultra) reuses the qwen3_coder tool calling parser; Nemotron V1 / V2 (DeciLM) is removed from the chart for being an older generation, but the nemotron_deci parser is still supported.</li>'
+        '<li>In the <strong>Detailed</strong> view the number on a cell (with a <span style="color:#8a6d3b">Δ</span> suffix, e.g. <span style="color:#8a6d3b">2Δ</span>) = how many selected <strong>Compare</strong> parsers diverge from the Reference (<span style="color:#0a7d2c">=</span> means every selected Compare matches). A divergence with no <code>explanation:</code> yet is flagged <span style="color:#b00">?</span> (research needed); <span style="color:#b00">!</span> marks an engine that errors by design; <span style="color:#b00">✗</span> means the parser ran but failed to parse.</li>'
+        '<li><strong>v1</strong> = the stable batch parser crate (<code>parsers/v1/src/...</code>, <code>dynamo-parsers</code>); <strong>v2</strong> = the WIP streaming parser crate (<code>parsers/v2/src/...</code>, <code>dynamo-parsers-v2</code>).</li>'
+        '<li><span class="parser-suffix">†</span> no vLLM Python peer parser for this family. &nbsp; <span class="parser-suffix">§</span> no SGLang peer parser for this family. &nbsp; <span class="parser-suffix">‡</span> Nemotron V3 (Ultra) reuses the qwen3_coder parser.</li>'
         "</ul>"
         f"{versions_html}"
     )
@@ -681,11 +668,12 @@ _IMPL_DISPLAY = IMPL_DISPLAY
 
 
 def _short_unavailable(reason: object) -> str:
-    """Collapse the verbose "… not yet implemented for this family; …" reason to a
-    terse "not yet implemented"; keep other reasons (missing peer parser, capture
-    error) verbatim since they carry specifics."""
+    """A family the Dynamo v2 stream parser doesn't implement is a plain neutral
+    `n/a` (matching the v1 table, which has no "TODO" concept) — collapse the verbose
+    "… not yet implemented for this family; …" reason to `n/a`. Other reasons (missing
+    peer parser, capture error) stay verbatim since they carry specifics."""
     r = str(reason)
-    return "not yet implemented" if "not yet implemented" in r else r
+    return "n/a" if "not yet implemented" in r else r
 
 
 def _format_output_block_html(block, family: str | None = None) -> str:
@@ -695,6 +683,10 @@ def _format_output_block_html(block, family: str | None = None) -> str:
     if not isinstance(block, dict):
         return html_lib.escape("(no expectation)")
     if block.get("unavailable"):
+        # Un-implemented Dynamo v2 family reads as a plain "n/a" (no "unavailable:"
+        # prefix, no "not yet implemented" prose) — same clean placeholder as the v1 table.
+        if _is_todo_unavailable(block):
+            return html_lib.escape("n/a")
         return html_lib.escape(f"unavailable: {_short_unavailable(block['unavailable'])}")
     if "error" in block:
         return html_lib.escape(f"error matching {block['error']!r}")
@@ -714,12 +706,13 @@ def _format_output_block_html(block, family: str | None = None) -> str:
 
 def _cand_section_body(block, family: str | None = None) -> str:
     """A compare candidate's tooltip section body: its output block plus its own
-    `reason:` (when present). The reason lives INSIDE the candidate's toggleable
+    `explanation:` (when present). The note lives INSIDE the candidate's toggleable
     section — so it shows only when that candidate is selected — instead of a global
     cross-engine "Divergent reasons" blob that would name unselected engines."""
     body = _format_output_block_html(block, family)
-    if isinstance(block, dict) and block.get("reason"):
-        body += "\nreason: " + html_lib.escape(str(block["reason"]))
+    note = _explanation(block)
+    if note:
+        body += "\nexplanation: " + html_lib.escape(str(note))
     return body
 
 
@@ -734,6 +727,27 @@ def _dynamo_note_sections(case: dict) -> list[tuple[str, str]]:
     if not note:
         return []
     return [("Dynamo recovery contract", linkify_text_html(str(note)))]
+
+
+
+# Candidate labels look like "vLLM Python 0.23.0 (stream)". Sort sections by engine
+# (label prefix) ascending, then version DESCENDING within the engine — matching the
+# compare bar's latest-first ordering. Two stable passes: version-desc, then prefix.
+_CAND_LABEL_VER_RE = re.compile(r"^(.*?)(\d[\w.\-]*)(\s*\(.*\))?\s*$")
+
+
+def _sort_candidate_sections(sections: list) -> None:
+    def parts(label: str):
+        m = _CAND_LABEL_VER_RE.match(label)
+        if not m:
+            return (label, "0", "")
+        return (m.group(1), m.group(2) or "0", m.group(3) or "")
+
+    sections.sort(
+        key=lambda sec: toolcalling_table._version_sort_key(parts(sec[0])[1]),
+        reverse=True,
+    )
+    sections.sort(key=lambda sec: (parts(sec[0])[0], parts(sec[0])[2]))
 
 
 def _build_tooltip_html(case: dict, dyn, output_kind: str = "batch") -> str:
@@ -844,13 +858,19 @@ def _build_tooltip_html(case: dict, dyn, output_kind: str = "batch") -> str:
                 )
             )
 
-    # Show the compare candidates in the same lexical order as the bucket chips.
+    # Engine ascending, version DESCENDING within the engine (latest first),
+    # matching the compare-bar ordering.
     if cmp_items or ver_status:
-        output_sections.sort(key=lambda s: s[0])
+        _sort_candidate_sections(output_sections)
 
     reasons = _tooltip_for(case, dyn, impl_keys) if isinstance(dyn, dict) else ""
 
     chart = _per_chunk_chart_html(case, output_kind)
+    # A CANDIDATE chart (columns = compare candidates, `data-cand`-keyed) already
+    # carries every candidate's output + explanation in its assembled/output row,
+    # so the per-candidate list sections above it would repeat the same info —
+    # drop them. Legacy impl-column charts keep the sections for versioned cells.
+    cand_chart = chart is not None and "data-cand" in chart[1]
 
     dyn_leak = _dynamo_tool_call_leak(dyn) if isinstance(dyn, dict) else None
     return _build_conformance_tooltip_html(
@@ -861,12 +881,16 @@ def _build_tooltip_html(case: dict, dyn, output_kind: str = "batch") -> str:
         # When the chart is shown it carries a final "assembled" row per impl, so
         # the separate per-engine output blocks would be redundant — drop them.
         # Exception: versioned candidates (__ver_status) keep their per-candidate
-        # `cand cand-<impl>-<slug>` sections so the compare selection can toggle each
-        # version's assembled output alongside the chart.
+        # `cand cand-<impl>-<slug>` sections ONLY while the chart is impl-keyed;
+        # a candidate chart replaces them entirely.
         output_sections=(
-            output_sections
-            if (ver_status or cmp_items)
-            else (None if chart else output_sections)
+            None
+            if cand_chart
+            else (
+                output_sections
+                if (ver_status or cmp_items)
+                else (None if chart else output_sections)
+            )
         ),
         # In the compare model each candidate's reason lives in its own section
         # (via _cand_section_body), so suppress the global cross-engine blob that
@@ -912,12 +936,124 @@ def _render_chunk_deltas(deltas: list, normal_text: str) -> str:
     return "   ".join(parts) if parts else "—"
 
 
+def _version_candidate_chart_html(case: dict, ver_status: dict) -> tuple[str, str] | None:
+    """Per-chunk grid whose columns are the per-version CANDIDATES from `__ver_status`
+    (one per `(impl, version)`, key `{impl}-{slug}` matching the compare-bar). Each
+    column shows that version's per-chunk deltas (captured in `_stream_version_status_map`)
+    and, in the final `assembled` row, its assembled output. The JS shows only the
+    Reference + checked compare-with columns and marks the Reference. First column is the
+    shared input (delta_text)."""
+    input_chunks = [c for c in (case.get("chunks") or []) if isinstance(c, dict)]
+    if not input_chunks:
+        return None
+    family = case.get("__family")
+    chunk_html = colorize_stream_deltas(input_chunks, family)
+    candidates = []  # (key, label, info)
+    for impl in ("dynamo_rust", "vllm_rust", "vllm_python", "sglang_python"):
+        # Engine columns in canonical order; within an engine, LATEST version first.
+        entries = sorted(
+            (ver_status.get(impl) or {}).items(),
+            key=lambda kv: toolcalling_table._version_sort_key(str(kv[1].get("version") or "0")),
+            reverse=True,
+        )
+        for slug, info in entries:
+            candidates.append(
+                (f"{impl}-{slug}", _full_label(impl, info.get("version"), "stream"), info)
+            )
+    if not candidates:
+        return None
+    def _col_header(key: str, label: str, info: dict) -> str:
+        # The capture is emission-packed (fewer rows than input chunks): row
+        # positions are NOT consumer-visible timing, so per-chunk cells stay
+        # empty and the output shows only in the assembled row.
+        note = (
+            common.timing_note("bursts at end of call; per-chunk timing not recorded")
+            if not info.get("aligned", True)
+            else ""
+        )
+        return common.cand_th(key, html_lib.escape(label) + note)
+
+    header = "".join(_col_header(key, label, info) for key, label, info in candidates)
+    rows = []
+    for i, chunk in enumerate(input_chunks):
+        inp = chunk_html[i]
+        if chunk.get("finish_reason"):
+            inp += (
+                ' <span class="fr">finish='
+                + html_lib.escape(str(chunk["finish_reason"]))
+                + "</span>"
+            )
+        cells = ""
+        for key, _label, info in candidates:
+            chs = info.get("chunks")
+            body = ""
+            if not info.get("aligned", True):
+                body = "—"  # timing not recorded; output appears in `assembled` only
+            elif isinstance(chs, list) and i < len(chs):
+                body = _render_chunk_deltas(
+                    chs[i].get("deltas") or [], chs[i].get("normal_text") or ""
+                )
+            cells += common.cand_td(key, body)
+        rows.append(f'<tr><td class="cin">{inp}</td>{cells}</tr>')
+    # `_cand_section_body` (not the bare block formatter) so each candidate's
+    # `explanation:` note rides in its column — the chart REPLACES the per-candidate
+    # list sections, so nothing the list carried may be lost.
+    final_cells = "".join(
+        common.cand_td(
+            key, _cand_section_body(info.get("block"), family).replace(chr(10), "<br>")
+        )
+        for key, _label, info in candidates
+    )
+    rows.append(f'<tr class="ttip-final"><td class="cin">assembled</td>{final_cells}</tr>')
+    table = common.candidate_chart_table(header, rows)
+    return ("Per-chunk emit (recorded from parser = expected)", table)
+
+
+def _merged_candidate_chart_html(case: dict, cmp_items: list) -> tuple[str, str] | None:
+    """Candidate chart for the merged batch tab: same left-to-right layout as the
+    stream chart, but batch input is a single text (one "chunk"), so there is one
+    `output` row — each candidate's full result side by side. Columns are the
+    `__cmp` candidates (`data-cand` keys match the compare bar), toggled/REF-marked
+    by the same JS as the stream chart."""
+    model_text = case.get("model_text")
+    if not isinstance(model_text, str) or not model_text or not cmp_items:
+        return None
+    family = case.get("__family")
+    header = "".join(
+        common.cand_th(item["key"], html_lib.escape(item["label"])) for item in cmp_items
+    )
+    cells = "".join(
+        common.cand_td(
+            item["key"],
+            _cand_section_body(item.get("block"), family).replace(chr(10), "<br>"),
+        )
+        for item in cmp_items
+    )
+    input_html = f"input_text='{colorize_markup(model_text, family)}'"
+    final_row = f'<tr class="ttip-final"><td class="cin">{input_html}</td>{cells}</tr>'
+    table = common.candidate_chart_table(header, [final_row])
+    return ("Output (recorded from parser = expected)", table)
+
+
 def _per_chunk_chart_html(case: dict, output_kind: str = "stream") -> tuple[str, str] | None:
     """Per-chunk breakdown as a compact table: one row per chunk, first column the
     input delta_text, then one column per available impl (Dynamo Rust, vLLM Rust,
     vLLM Python, SGLang)
     showing what it emitted at that chunk. Returns (label, table_html), or None for
     non per-chunk stream cases. No inter-tag whitespace (keeps the markup tight)."""
+    # Stream tab: columns are the per-version CANDIDATES (from __ver_status), so the
+    # popup shows the Reference + each checked compare-with (e.g. Dynamo v1 vs v2).
+    ver_status = case.get("__ver_status")
+    if ver_status and case.get("chunks"):
+        cand = _version_candidate_chart_html(case, ver_status)
+        if cand is not None:
+            return cand
+    # Merged batch tab: same chart, single-output row (batch input is "one chunk").
+    cmp_items = case.get("__cmp")
+    if cmp_items and not case.get("chunks"):
+        cand = _merged_candidate_chart_html(case, cmp_items)
+        if cand is not None:
+            return cand
     chunks = case.get("chunks")
     if not (isinstance(chunks, list) and chunks):
         return None
@@ -945,7 +1081,7 @@ def _per_chunk_chart_html(case: dict, output_kind: str = "stream") -> tuple[str,
     baseline_td = ""
     base_header = ""
     if show_baseline:
-        base_header = f'<th class="cbase-h">baseline<br>{_impl_mode_label_html(BASELINE_IMPL, _BATCH_MODE_MARKER)}</th>'
+        base_header = f'<th class="cbase-h">baseline<br>{html_lib.escape(_IMPL_DISPLAY[BASELINE_IMPL])} batch parser</th>'
         baseline_body = _format_output_block_html(dyn_batch, family).replace(
             chr(10), "<br>"
         )
@@ -953,9 +1089,22 @@ def _per_chunk_chart_html(case: dict, output_kind: str = "stream") -> tuple[str,
             f'<td class="cbase" rowspan="{n_body_rows}">{baseline_body}</td>'
         )
     mode_marker = _STREAM_MODE_MARKER if output_kind == "stream" else _BATCH_MODE_MARKER
-    header = base_header + "".join(
-        f"<th>{_impl_mode_label_html(i, mode_marker)}</th>" for i in impls
-    )
+    parse_mode = "stream" if mode_marker == _STREAM_MODE_MARKER else "batch"
+
+    # Full parser names (no cryptic D_RS/V_RS/… tags); the Dynamo column is the
+    # Reference the peer columns are compared against, so flag it `← REF`.
+    def _col_h(impl: str) -> str:
+        name = html_lib.escape(f"{_IMPL_DISPLAY[impl]} {parse_mode} parser")
+        if impl == BASELINE_IMPL:
+            inner = (
+                '<span class="ttip-ref-star">★</span> '
+                f'{name} <span class="ttip-ref">← REF</span>'
+            )
+        else:
+            inner = name
+        return common.cand_th(impl, inner, attr="data-col-impl")
+
+    header = base_header + "".join(_col_h(i) for i in impls)
     rows = []
     for i, chunk in enumerate(chunks):
         if not isinstance(chunk, dict):
@@ -976,7 +1125,13 @@ def _per_chunk_chart_html(case: dict, output_kind: str = "stream") -> tuple[str,
         exp = _normalize_impl_mapping(chunk.get("expected") or {})
         nt = _normalize_impl_mapping(chunk.get("normal_text") or {})
         cells = "".join(
-            f"<td>{_render_chunk_deltas(_impl_get(exp, i2, []) or [], _impl_get(nt, i2, '') or '')}</td>"
+            common.cand_td(
+                i2,
+                _render_chunk_deltas(
+                    _impl_get(exp, i2, []) or [], _impl_get(nt, i2, "") or ""
+                ),
+                attr="data-col-impl",
+            )
             for i2 in impls
         )
         # The baseline cell (rowspan) is emitted once, on the first body row.
@@ -987,19 +1142,19 @@ def _per_chunk_chart_html(case: dict, output_kind: str = "stream") -> tuple[str,
     # baseline column on the left (assembled X_s vs Dynamo batch).
     derived = _expected(case)
     final_cells = "".join(
-        f"<td>{_format_output_block_html(_impl_get(derived, i2), family).replace(chr(10), '<br>')}</td>"
+        common.cand_td(
+            i2,
+            _format_output_block_html(_impl_get(derived, i2), family).replace(
+                chr(10), "<br>"
+            ),
+            attr="data-col-impl",
+        )
         for i2 in impls
     )
     rows.append(
         f'<tr class="ttip-final"><td class="cin">assembled</td>{baseline_td}{final_cells}</tr>'
     )
-    table = (
-        '<table class="ttip-chunks"><thead><tr><th>input</th>'
-        + header
-        + "</tr></thead><tbody>"
-        + "".join(rows)
-        + "</tbody></table>"
-    )
+    table = common.candidate_chart_table(header, rows)
     if unavailable:
         note = "; ".join(
             f"{_IMPL_DISPLAY[i]}: {_short_unavailable(unavailable[i])}"
@@ -1014,7 +1169,7 @@ def _tooltip_for(case: dict, dyn: dict, impl_keys: tuple[str, ...] = IMPL_KEYS) 
     """Build the hover-tooltip text for a divergent cell.
 
     Each non-matching, non-unavailable peer contributes one line:
-      vllm_python: <reason>                        # `reason:` field present
+      vllm_python: <reason>                        # `explanation:` field present
       vllm_python: UNKNOWN — divergent ...         # divergent, no reason
       vllm_python: expected error matching '...'   # `error:` field present
     """
@@ -1042,21 +1197,22 @@ def _tooltip_for(case: dict, dyn: dict, impl_keys: tuple[str, ...] = IMPL_KEYS) 
         }
         if n_block == n_dyn:
             continue
-        if "reason" in block:
-            parts.append(f"{name}: {block['reason']}")
+        note = _explanation(block)
+        if note:
+            parts.append(f"{name}: {note}")
         elif "calls" in block or "normal_text" in block:
-            parts.append(f"{name}: (research-needed — no `reason:` field yet)")
+            parts.append(f"{name}: (research-needed — no `explanation:` field yet)")
     return "\n".join(parts)
 
 
 def _build_na_tooltip_html(case: dict) -> str:
-    """Tooltip for an n/a stub case (only `reason:` in YAML, no `expected:`
-    block). Renders case id + description + the reason. Used when the cell
+    """Tooltip for an n/a stub case (only `explanation:` in YAML, no `expected:`
+    block). Renders case id + description + the note. Used when the cell
     is n/a because the scenario doesn't apply to the family's parser syntax."""
     case_id = case.get("__case_id", "")
     desc = case.get("description") or ""
     head = f"{case_id} — {desc}" if (case_id and desc) else (case_id or desc)
-    reason = case.get("reason") or "n/a (no reason given)"
+    reason = _explanation(case) or "n/a (no explanation given)"
     return _build_conformance_tooltip_html(
         head=head,
         extra_sections=[("Why not applicable", linkify_text_html(str(reason)))],
@@ -1080,7 +1236,7 @@ def _build_missing_tooltip_html(mode: str, family: str, sub: str) -> str:
                 html_lib.escape(
                     "No fixture entry exists for this family/case. If the case "
                     "is intentionally not applicable, add an explicit n/a stub "
-                    "with description: and reason: so the table can explain it."
+                    "with description: and explanation: so the table can explain it."
                 ),
             )
         ],
@@ -1142,8 +1298,11 @@ def render_cell_html(
     cmp_attr = f' data-cmp="{cmp_json}"' if cmp_json else ""
     cmp_span = '<span class="cmp-marker"><span class="marker-text"></span></span>' if cmp_json else ""
     marker_spans = cmp_span + marker_spans
+    # data-family lets the compare JS tell "not implemented" (the selected Reference
+    # parser doesn't support this family) apart from the case-level "not applicable".
+    fam_attr = f' data-family="{html_lib.escape(str(family or ""))}"'
     td_open = (
-        f'<td class="cell {cls} {band_cls}" data-col-hide-group="{col_group}"{cmp_attr} '
+        f'<td class="cell {cls} {band_cls}" data-col-hide-group="{col_group}"{cmp_attr}{fam_attr} '
         f"{status_attrs} {marker_attrs}>"
     )
     if case is None:
@@ -1152,12 +1311,12 @@ def render_cell_html(
 
     dyn = _impl_get(case.get("expected") or {}, BASELINE_IMPL)
     if not isinstance(dyn, dict):
-        # n/a stub: case has only `reason:` (no `expected:` block).
+        # n/a stub: case has only `explanation:` (no `expected:` block).
         fp = case.get("__fixture_path", "")
         ttip = _build_na_tooltip_html(case)
         if not fp:
             return f"{td_open}{marker_spans}{display_text}{ttip}</td>"
-        href = html_lib.escape(fp)
+        href = html_lib.escape(common.fixture_href(fp))
         return f'{td_open}{marker_spans}<a href="{href}">{display_text}</a>{ttip}</td>'
 
     fp = case.get("__fixture_path", "")
@@ -1166,7 +1325,7 @@ def render_cell_html(
     ttip = _build_sob_tooltip(case, marker_context) if sob else _build_tooltip_html(case, dyn, output_kind)
     if not fp:
         return f"{td_open}{marker_spans}{display_text}{ttip}</td>"
-    href = html_lib.escape(fp)
+    href = html_lib.escape(common.fixture_href(fp))
     return f'{td_open}{marker_spans}<a href="{href}">{display_text}</a>{ttip}</td>'
 
 
@@ -1316,6 +1475,15 @@ def _parser_label_markdown(
     return f"{family}{suff}"
 
 
+# Dynamo parser v2 stream parsers with a standard `push`/`finish` text path:
+# family -> (backend label, source file under parsers/v2/src/tool_calling/, format marker).
+# Families with bespoke paths (harmony token-id/text, deepseek_v4 DSML note) keep their
+# dedicated branches below; new standard families belong here, not in new if-branches.
+_V2_STREAM_PARSER_CELLS: dict[str, tuple[str, str, str]] = {
+    "qwen3_coder": ("Qwen3CoderToolStreamParser text path", "qwen3_coder.rs", "Qwen XML"),
+}
+
+
 def _parser_cell_html(
     family: str,
     refs: dict[str, tuple[str, int]],
@@ -1373,6 +1541,18 @@ def _parser_cell_html(
             "push",
             fixtures,
             note,
+        )
+    v2_cell = _V2_STREAM_PARSER_CELLS.get(family)
+    if v2_cell and stream_context in ("streamv2", "batch_on_stream"):
+        backend, source_file, marker = v2_cell
+        fixtures = "v2 stream fixtures" if stream_context == "streamv2" else "v1 batch fixtures"
+        note = (
+            f"TC stream row. It consumes {marker} text chunks and emits per-chunk tool-call deltas."
+            if stream_context == "streamv2"
+            else f"TC batch-on-stream row. It feeds each v1 batch fixture's full text through the v2 {marker} streaming parser."
+        )
+        return _v2_parser_cell_html(
+            row_label, family, backend, source_file, "push", fixtures, note
         )
     if stream_context in ("streamv2", "batch_on_stream"):
         # No Dynamo parser v2 stream parser for this family yet. Inventory-only
@@ -1901,15 +2081,35 @@ def _full_label(impl: str, version: object, mode: str) -> str:
     return f"{base}{ver} ({mode})"
 
 
+def _candidate_label_html(label: str) -> str:
+    """Escape a compare candidate label and color the trailing mode parenthetical:
+    `batch` maroon, `stream` NVIDIA green (matches the tab-label word coding). The
+    plain `label` stays around for tooltips; only the compare bar uses this HTML."""
+    esc = html_lib.escape(label)
+    m = re.search(r"\(([^)]*)\)\s*$", esc)
+    if not m:
+        return esc
+    s, e = m.span(1)
+    inner = m.group(1)
+    inner = inner.replace("batch", '<span class="cand-batch">batch</span>')
+    inner = inner.replace("stream", '<span class="cand-stream">stream</span>')
+    return esc[:s] + inner + esc[e:]
+
+
 def _dynamo_v2_version() -> str | None:
-    """Version of the v2 Dynamo parser crate (dynamo-parsers-v2); the stream/v2 tabs
-    run this, not the v1 dynamo-parsers crate. captured_with only records the label
-    'Dynamo parser v2', so read the real version from parsers_v2/Cargo.toml."""
-    p = toolcalling_table._FRONTEND_CRATES_ROOT / "parsers_v2" / "Cargo.toml"
-    if not p.exists():
-        return None
-    m = re.search(r'^version\s*=\s*"([^"]+)"', p.read_text(), re.M)
-    return m.group(1) if m else None
+    """Version label for the Dynamo v2 stream parser, taken from the PUBLISHED fixture
+    provenance (the v2-major `dynamo_rust-<ver>` dir, e.g. 0.1.11), NOT the live
+    parsers/v2/Cargo.toml.
+
+    Sourcing from the fixtures keeps every "Dynamo v2 Rust … (stream)" label on the page
+    consistent (the stream-tab candidates already read the dir version) and matching the
+    captured data. Reading the live crate makes the label drift ahead — the page would
+    show 0.1.16 in one place and the real captured 0.1.11 in another the moment the crate
+    is bumped before a re-capture/republish."""
+    for v in _stream_impl_versions().get(BASELINE_IMPL, []):
+        if _dynamo_vtag(v) == "v2":
+            return v
+    return None
 
 
 def _v2_display_version(impl: str) -> str | None:
@@ -1957,18 +2157,19 @@ def _impl_candidate_items(
 
 
 def _candidate_items() -> list[dict[str, str]]:
-    """Ordered comparison candidates for the batch tab: Dynamo, then vLLM/SGLang
-    versions ascending. Each: {key, impl, version, slug, label, short, default_bucket}.
+    """Ordered comparison candidates for the batch tab: Dynamo, then vLLM/SGLang —
+    within each engine versions run LATEST-FIRST (0.24.0 before 0.23.0). Each:
+    {key, impl, version, slug, label, short, default_bucket}.
 
-    Default layout: A (reference) = the first candidate (Dynamo); B (compare with) =
-    the latest version of each peer impl; C (others) = the remaining older versions."""
+    Default layout: A (reference) = the first candidate (Dynamo's latest); B (compare
+    with) = the latest version of each peer impl; C (others) = the older versions."""
     impl_versions = _batch_impl_versions()
     latest = {lg: (vers[-1] if vers else None) for lg, vers in impl_versions.items()}
     out: list[dict[str, str]] = []
     first = True
     for legacy in ("dynamo", "vllm", "sglang"):
         canon = _VERSION_LEGACY_TO_CANON.get(legacy)
-        for v in impl_versions.get(legacy, []):
+        for v in reversed(impl_versions.get(legacy, [])):
             slug = toolcalling_table._version_slug(v)
             if first:
                 bucket = "A"
@@ -1996,8 +2197,11 @@ def _candidate_items() -> list[dict[str, str]]:
 # <impl>-<version>/ (per-impl expected; lowest version = full anchor, higher =
 # changed-only). resolve_stream_fixtures.py reconstructs a flat tree for any selected
 # version set — the stream analogue of resolve_fixtures.py + the batch __ver_status map.
+# Read from the HuggingFace download cache (fixtures aren't in the repo since DIS-2310);
+# _common.sh exports CONFORMANCE_FIXTURES_ROOT. Without this the stream tab's versioned
+# candidates come up empty and the Base/Compare parser selector doesn't render.
 _STREAM_SRC = (
-    toolcalling_table._FRONTEND_CRATES_ROOT / "conformance/toolcalling/fixtures-stream-v2"
+    toolcalling_table._fixtures_cache_root() / "toolcalling/fixtures-stream-v2"
 )
 
 
@@ -2028,7 +2232,8 @@ def _stream_candidate_items() -> list[dict[str, str]]:
     latest = {i: (vs[-1] if vs else None) for i, vs in impl_versions.items()}
     out: list[dict[str, str]] = []
     for impl in ("dynamo_rust", "vllm_rust", "vllm_python", "sglang_python"):
-        for v in impl_versions.get(impl, []):
+        # Within an engine, versions run LATEST-FIRST (0.24.0 before 0.23.0).
+        for v in reversed(impl_versions.get(impl, [])):
             slug = toolcalling_table._version_slug(v)
             if impl == BASELINE_IMPL:
                 # Dynamo v1 (jail+batch) is the default reference; v2 goes to compare.
@@ -2043,6 +2248,38 @@ def _stream_candidate_items() -> list[dict[str, str]]:
                 "default_bucket": bucket,
             })
     return out
+
+
+def _stream_version_families(impl: str, version: str) -> set[str] | None:
+    """Families the `<impl>-<version>` stream fixture dir actually holds — the
+    authoritative coverage for that parser build. `None` if the dir is absent (don't
+    gate). Used to mark the Dynamo v2 stream candidate `na` on families its parser
+    doesn't implement, since the dir only contains the families it produced output
+    for (dynamo_rust-0.1.11 = the v2-supported handful; dynamo_rust-3.0.0 = all)."""
+    d = _STREAM_SRC / f"{impl}-{version}"
+    if not d.is_dir():
+        return None
+    return {p.name for p in d.iterdir() if p.is_dir()}
+
+
+def _parser_ni_map() -> dict:
+    """Map candidate key -> {label, families} for parsers with LIMITED family coverage
+    (only the Dynamo v2 parser today, which implements a handful of families). The
+    compare JS uses it to render a per-family "not implemented" reason when such a
+    parser is the selected Reference, instead of the case-level "not applicable"
+    (which is about whether the test case fits the family, not whether the parser
+    exists). Coverage is the authoritative `dynamo_rust-<v2>` fixture dir family list."""
+    v2ver = _dynamo_v2_version()
+    if not v2ver:
+        return {}
+    fams = sorted(_stream_version_families(BASELINE_IMPL, v2ver) or [])
+    if not fams:
+        return {}
+    slug = toolcalling_table._version_slug(v2ver)
+    entry = {"label": _full_label(BASELINE_IMPL, v2ver, "stream"), "families": fams}
+    # The v2 candidate key differs by tab: "<impl>-s-<slug>" on the batch
+    # (stream-on-batch) tab, bare "<impl>-<slug>" on the stream tab.
+    return {f"{BASELINE_IMPL}-s-{slug}": entry, f"{BASELINE_IMPL}-{slug}": entry}
 
 
 def _stream_version_status_map() -> dict[tuple[str, str], dict[str, dict[str, dict]]]:
@@ -2065,14 +2302,66 @@ def _stream_version_status_map() -> dict[tuple[str, str], dict[str, dict[str, di
     saved_captured = _CAPTURED_WITH_BY_MODE.get("streamv2")
     result: dict[tuple[str, str], dict[str, dict[str, dict]]] = {}
 
+    def _raw_chunk_counts(impl, version):
+        """{(family, case_id): n_chunks} straight from the <impl>-<version> dir docs.
+        The resolver pads a folded case to the input chunk count, so alignment
+        (did this capture record per-input-chunk timing?) is only visible here."""
+        counts: dict[tuple[str, str], int] = {}
+        vdir = _STREAM_SRC / f"{impl}-{version}"
+        if vdir.is_dir():
+            for fp in vdir.glob("*/*.yaml"):
+                try:
+                    doc = yaml.safe_load(fp.read_text()) or {}
+                except Exception:
+                    continue
+                fam = doc.get("family") or fp.parent.name
+                for cid, vc in (doc.get("cases") or {}).items():
+                    if isinstance(vc, dict) and isinstance(vc.get("chunks"), list):
+                        counts[(fam, cid)] = len(vc["chunks"])
+        return counts
+
     def _record(cases, impl, version):
         slug = toolcalling_table._version_slug(version)
+        raw_counts = _raw_chunk_counts(impl, version)
+        # The Dynamo parser is version-split into two DIFFERENT parsers: v2
+        # (dynamo_rust-0.1.11) implements only a handful of families, while the v1
+        # jail (dynamo_rust-3.0.0) covers all. The stream assembly defaults an absent
+        # impl to an empty-but-present block, which would paint the v2 parser green on
+        # families it doesn't implement. Gate on the version dir's actual family list
+        # so uncovered families read `na` (not implemented), not a clean empty output.
+        covered = _stream_version_families(impl, version) if impl == BASELINE_IMPL else None
         for key, case in cases.items():
             block = _impl_get(case.get("expected") or {}, impl)
+            status = _overview_status(case, impl)
+            # Capture this impl's per-chunk deltas at THIS version so the tooltip's
+            # per-chunk grid can show a column per (impl, version) candidate.
+            vchunks = None
+            raw = case.get("chunks")
+            if isinstance(raw, list):
+                vchunks = []
+                for ch in raw:
+                    if not isinstance(ch, dict):
+                        continue
+                    exp = _normalize_impl_mapping(ch.get("expected") or {})
+                    nt = _normalize_impl_mapping(ch.get("normal_text") or {})
+                    vchunks.append({
+                        "deltas": _impl_get(exp, impl, []) or [],
+                        "normal_text": _impl_get(nt, impl, "") or "",
+                    })
+            if covered is not None and case.get("__family") not in covered:
+                block, status, vchunks = None, "na", None
+            # Aligned = the raw capture recorded one row per INPUT chunk, so a row
+            # index is real consumer-visible timing. The v1 jail captures are
+            # emission-packed (fewer rows than inputs) — timing NOT recorded.
+            raw_n = raw_counts.get((key[0], case.get("__case_id") or ""))
+            n_input = len(raw) if isinstance(raw, list) else 0
+            aligned = raw_n is None or raw_n == n_input
             result.setdefault(key, {}).setdefault(impl, {})[slug] = {
-                "status": _overview_status(case, impl),
+                "status": status,
                 "block": block,
                 "version": version,
+                "chunks": vchunks,
+                "aligned": aligned,
             }
 
     def _resolve_and_load(select):
@@ -2226,7 +2515,13 @@ def _attach_merged_cmp(cases: dict) -> None:
         items: list[dict] = []
         ver_status = case.get("__ver_status") or {}
         for impl in ("dynamo_rust", "vllm_python", "sglang_python"):
-            for slug, info in (ver_status.get(impl) or {}).items():
+            # Within an engine, LATEST version first (matches the compare bar).
+            entries = sorted(
+                (ver_status.get(impl) or {}).items(),
+                key=lambda kv: toolcalling_table._version_sort_key(str(kv[1].get("version") or "0")),
+                reverse=True,
+            )
+            for slug, info in entries:
                 items.append({
                     "key": f"{impl}-b-{slug}",
                     "label": _full_label(impl, info['version'], "batch"),
@@ -2278,7 +2573,10 @@ def _compute_stats(
                 s["na"] += 1
                 continue
             if text == "…":
-                s["todo"] += 1
+                # Un-implemented Dynamo v2 family: counted as plain n/a in the stats,
+                # like the v1 table (no distinct "TODO" bucket). The "…" sentinel is
+                # kept only to detect all-unimplemented inventory rows (see all_todo).
+                s["na"] += 1
                 continue
             s["real"] += 1
             if text == "=":
@@ -2422,7 +2720,6 @@ def render_html_panel(
     }
     if comparison == "stream_vs_batch":
         panel["details_note_html"] = f"<p>{_stream_parity_explainer_html(parser_stream_context)}</p>"
-        panel["parity_explainer_html"] = ""
     return panel
 
 
@@ -2453,13 +2750,18 @@ def _build_sob_tooltip(case: dict, marker_context: str | None = None) -> str:
     # `chunks:`. When it's present it already shows both X_s and X_b, so the
     # separate per-engine blocks below would be redundant — skip them.
     chart = _per_chunk_chart_html(case, "stream")
+    # A CANDIDATE chart (data-cand columns = the compare candidates) already carries
+    # each candidate's per-chunk emit + assembled output (with explanation) in its
+    # own toggleable/REF-ordered column — the per-candidate list sections would
+    # repeat it one by one, so they are dropped when that chart rendered.
+    cand_chart = chart is not None and "data-cand" in chart[1]
     sections: list[tuple] = []
     ver_status = case.get("__ver_status") or {}
-    if ver_status:
+    if ver_status and not cand_chart:
         # Versioned candidates (impl×engine-version, e.g. vLLM 0.23.0 vs 0.24.0):
         # one toggleable section each showing that version's assembled stream output.
-        # Kept alongside the chart so the Base/Compare selection reveals each
-        # candidate — the stream analogue of the batch tab's per-version blocks.
+        # Kept alongside a legacy impl-keyed chart so the Base/Compare selection
+        # reveals each candidate — the stream analogue of the batch per-version blocks.
         for impl in ("dynamo_rust", "vllm_rust", "vllm_python", "sglang_python"):
             for slug, info in (ver_status.get(impl) or {}).items():
                 blk = info["block"]
@@ -2483,8 +2785,8 @@ def _build_sob_tooltip(case: dict, marker_context: str | None = None) -> str:
                     (f"{lbl} (batch)", _format_output_block_html(bblk, family), f"cand cand-{impl}",
                      isinstance(bblk, dict) and _block_tool_call_leaks(bblk))
                 )
-    # Show the compare candidates in the same lexical order as the bucket chips.
-    sections.sort(key=lambda s: s[0])
+    # Engine ascending, version DESCENDING within the engine (latest first).
+    _sort_candidate_sections(sections)
     return _build_conformance_tooltip_html(
         head=head,
         description=desc,
@@ -2539,7 +2841,7 @@ def _stream_on_batch_expected(overlay_case: dict, has_batch_text: bool = True) -
             expected[impl] = {
                 "calls": block.get("calls") or [],
                 "normal_text": block.get("normal_text") or "",
-                "reason": (
+                "explanation": (
                     f"Captured from the {IMPL_DISPLAY[impl]} streaming parser on the batch text. "
                     "Streaming output differs from Dynamo parser v2 token-incremental "
                     "behavior by design (text vs token streaming)."
@@ -2767,6 +3069,7 @@ def render_html(modes: list[str], family_filter: str | None = None) -> str:
             output=output,
             tabs=tabs,
             panels=[panel for _mode, panel, _has_cases in panels],
+            parser_ni_json=json.dumps(_parser_ni_map()),
         )
     )
     return _scrub_visible_conformance_text(html)
@@ -2805,25 +3108,36 @@ def _rewrite_panel_paths(
 
 
 def _tab_label(
-    prefix: str, data: str, parser: str | None, v2: bool, data_word: bool = True
+    prefix: str,
+    data: str,
+    parser: str | None,
+    v2: bool,
+    data_word: bool = True,
+    on_parser: bool = True,
 ) -> tuple[str, str]:
     """Build a tab label as `<prefix> vN (<data> data on <parser>-parser)`.
     Returns (plain, html); the html form wraps the parenthetical in a smaller-font
     span (`tab-sub`) and color-codes the words "batch"/"stream" (`w-batch`/`w-stream`)
     so the two axes are distinguishable. `data` is "batch" or "stream". `parser` is
     "batch"/"stream", or None for a bare "parser" (reasoning has a single parser, not
-    a batch/stream split). `data_word=False` drops the literal " data" word, e.g.
-    reasoning renders `(batch on parser)`."""
+    a batch/stream split). `data_word=False` drops the literal " data" word.
+    `on_parser=False` drops the `on <parser>-parser` clause entirely, so reasoning
+    renders `(batch data)` — the parser axis is meaningless there (one parser)."""
     version = "v2" if v2 else "v1"
     dword = " data" if data_word else ""
 
     def _w(word: str) -> str:
         return f'<span class="w-{word}">{word}</span>'
 
-    parser_plain = f"{parser}-parser" if parser else "parser"
-    parser_html = f"{_w(parser)}-parser" if parser else "parser"
-    plain = f"{prefix} {version} ({data}{dword} on {parser_plain})"
-    sub_html = f"({_w(data)}{dword} on {parser_html})"
+    if on_parser:
+        parser_plain = f"{parser}-parser" if parser else "parser"
+        parser_html = f"{_w(parser)}-parser" if parser else "parser"
+        on_plain = f" on {parser_plain}"
+        on_html = f" on {parser_html}"
+    else:
+        on_plain = on_html = ""
+    plain = f"{prefix} {version} ({data}{dword}{on_plain})"
+    sub_html = f"({_w(data)}{dword}{on_html})"
     return plain, f'{prefix} {version} <span class="tab-sub">{sub_html}</span>'
 
 
@@ -2849,33 +3163,15 @@ def _tab_button(panel: dict[str, Any]) -> str:
     )
 
 
-def _compare_legend_html() -> str:
-    return (
-        "<p><strong>Legend — compare mode:</strong> pick one <strong>Base</strong> and any number of "
-        "<strong>Compare</strong> candidates (parser + version); each cell counts how many selected "
-        "candidates produce different output than Base.</p>"
-        '<ul class="marker-defs">'
-        '<li><span style="color:#0a7d2c">=</span> every selected candidate matches Base.</li>'
-        '<li><span style="color:#8a6d3b">N</span> N selected candidates differ from Base.</li>'
-        '<li><span style="color:#8b949e">·</span> nothing available to compare (Base-only / peers not captured).</li>'
-        '<li><span style="color:#b00">↯</span> Base leaks tool call markup into <code>normal_text</code>.</li>'
-        '<li><span style="color:#aaa">n/a</span> Base has no captured output for this case.</li>'
-        "<li>Unavailable candidates never count toward the number but still appear in the hover tooltip, "
-        "which shows Base plus each selected candidate's output.</li>"
-        "</ul>"
-    )
-
-
 def _apply_common_legend(panels: list[dict[str, Any]], hrefs: dict[str, str]) -> None:
     legend_html = _common_legend_html(
         _peer_version_items(_peer_versions()),
         hrefs["pyproject_stub"],
     )
-    compare_legend = _compare_legend_html()
+    # One legend for every tab: the compare model (Reference vs Compare) is identical
+    # across tabs, so they all get the same rich legend.
     for panel in panels:
-        panel["legend_html"] = (
-            compare_legend if panel.get("id") == "tab-toolcalling-batch" else legend_html
-        )
+        panel["legend_html"] = legend_html
 
 
 def _combined_toolcalling_panels(hrefs: dict[str, str]) -> list[dict[str, Any]]:
@@ -2981,8 +3277,9 @@ def _combined_reasoning_panels(hrefs: dict[str, str]) -> list[dict[str, Any]]:
         )
         # Reasoning has a single parser (not a batch/stream split), so the parser
         # axis renders as a bare "parser"; only the data axis varies.
-        _r_label, _r_label_html = _tab_label("Reasoning", mode, None, False, data_word=False)
-        mode_word = "stream" if mode == "stream" else "batch"
+        _r_label, _r_label_html = _tab_label(
+            "Reasoning", mode, None, False, on_parser=False
+        )
         panel.update(
             {
                 "id": f"tab-reasoning-{mode}",
@@ -3000,15 +3297,6 @@ def _combined_reasoning_panels(hrefs: dict[str, str]) -> list[dict[str, Any]]:
                 "case_docs_label": "lib/parsers/REASONING_CASES.md",
                 "case_prefix": "REASONING.",
                 "case_section_id": f"reasoning-{mode}",
-                "parity_explainer_html": (
-                    "<strong>Conformance:</strong> "
-                    '<span style="color:#0a7d2c">=</span> all available reasoning outputs match · '
-                    f'<span style="color:#555">D</span> (Dynamo Rust {mode_word} parser) / '
-                    f'<span style="color:#555">V</span> (vLLM Python {mode_word} parser) / '
-                    f'<span style="color:#555">S</span> (SGLang {mode_word} parser) names output '
-                    "that differs from the selected parser · multiple markers mean multiple peer "
-                    "outputs differ from the selected parser."
-                ),
                 "parser_options": ("dynamo_rust", "vllm_python", "sglang_python"),
             }
         )
@@ -3033,6 +3321,10 @@ def render_combined_html(
         *_combined_reasoning_panels(hrefs),
     ]
     panels[0]["active"] = True
+    # Color the trailing (batch)/(stream) mode word in every compare candidate label.
+    for panel in panels:
+        for cand in panel.get("candidates", []):
+            cand["label_html"] = _candidate_label_html(cand["label"])
 
     now = datetime.datetime.now(zoneinfo.ZoneInfo("America/Los_Angeles"))
     stamp = now.strftime("%Y-%m-%d %H:%M %Z")
@@ -3056,6 +3348,7 @@ def render_combined_html(
             panels=panels,
             impl_versions=_impl_version_items(),
             candidate_items=_candidate_items(),
+            parser_ni_json=json.dumps(_parser_ni_map()),
         )
     )
     return _scrub_visible_conformance_text(html)

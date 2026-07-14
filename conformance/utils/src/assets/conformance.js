@@ -39,41 +39,93 @@
   // of Compare candidates; each cell shows how many selected candidates differ
   // from Base ("=" if none), plus ↯ when Base leaks markup. Tooltip shows Base +
   // each selected candidate. All client-side from each cell's data-cmp payload.
-  // Compare is per-panel: each tab's .cmpctl has its own candidate chips + buckets.
+  // Compare is per-panel: each tab's .cmpctl has its own Reference radios + Compare checkboxes.
   function activePanel() { return document.querySelector('.tab-panel.active'); }
   function panelCtl(panel) { return panel ? panel.querySelector('.cmpctl') : null; }
-  function ctlBase(ctl) { const c = ctl && ctl.querySelector('.bucket-A .chip'); return c ? c.dataset.cand : null; }
+  // Reference = the single checked radio; Compare-with = every checked checkbox.
+  function ctlBase(ctl) { const r = ctl && ctl.querySelector('input.cmp-ref:checked'); return r ? r.value : null; }
   function ctlShown(ctl) {
-    return ctl ? Array.from(ctl.querySelectorAll('.bucket-B .chip')).map(function (x) { return x.dataset.cand; }) : [];
+    return ctl ? Array.from(ctl.querySelectorAll('input.cmp-on:checked')).map(function (x) { return x.value; }) : [];
   }
+  // The Reference parser can't compare to itself: disable (and flag) its own
+  // Compare checkbox, re-enable every other row's.
+  function syncRefDisable(ctl, base) {
+    ctl.querySelectorAll('input.cmp-on').forEach(function (cb) {
+      const isRef = cb.value === base;
+      // The Reference is always part of the comparison (it's the base everything is
+      // compared against), so its Compare box shows pressed + locked. It's filtered
+      // out of the compare set in applyCtl, so it isn't double-counted.
+      if (isRef) { cb.checked = true; }
+      cb.disabled = isRef;
+      const row = cb.closest('.cmprow');
+      if (row) { row.classList.toggle('is-ref', isRef); }
+    });
+  }
+  // Compare keys are `<impl>-s-<version>` / `<impl>-b-<version>` (or `<impl>-s`); the
+  // per-chunk grid columns are keyed by bare impl. Strip the mode+version suffix.
+  function implOf(key) { return key ? key.replace(/-[sb](-.*)?$/, '') : key; }
   function toggleCands(cell, active, base) {
+    let baseSec = null;
     cell.querySelectorAll('.ttip .cand').forEach(function (sec) {
       const cls = Array.from(sec.classList).find(function (c) { return c.indexOf('cand-') === 0; });
       const key = cls ? cls.slice(5) : null;
       sec.classList.toggle('cand-on', key !== null && active.has(key));
       // Mark the Base reference's section so the tooltip flags which output the
       // others are being compared against.
-      sec.classList.toggle('cand-base', key !== null && key === base);
+      const isBase = key !== null && key === base;
+      sec.classList.toggle('cand-base', isBase);
+      if (isBase) { baseSec = sec; }
     });
+    // The Reference reads FIRST: move its section ahead of its sibling candidates.
+    if (baseSec) {
+      const first = baseSec.parentNode.querySelector('.cand');
+      if (first && first !== baseSec) { baseSec.parentNode.insertBefore(baseSec, first); }
+    }
+    // Per-chunk grid: show only the columns in the Reference + Compare-with selection.
+    const grid = cell.querySelector('.ttip-chunks');
+    if (grid) {
+      const cands = grid.querySelectorAll('[data-cand]');
+      if (cands.length) {
+        // Candidate-column grid: columns ARE the (impl, version) candidates. Show the
+        // Reference + each checked compare-with, flag the Reference column, and move
+        // it first (right after the input column) in every row.
+        cands.forEach(function (el) {
+          const key = el.getAttribute('data-cand');
+          el.classList.toggle('col-hidden', !active.has(key));
+          el.classList.toggle('col-ref', key === base);
+        });
+        if (base) {
+          grid.querySelectorAll('tr').forEach(function (tr) {
+            const el = tr.querySelector('[data-cand="' + base + '"]');
+            const first = tr.querySelector('[data-cand]');
+            if (el && first && first !== el) { tr.insertBefore(el, first); }
+          });
+        }
+      } else {
+        // Legacy impl-column grid: show columns whose engine is active.
+        const activeImpls = new Set(Array.from(active).map(implOf));
+        grid.querySelectorAll('[data-col-impl]').forEach(function (el) {
+          el.classList.toggle('col-hidden', !activeImpls.has(el.getAttribute('data-col-impl')));
+        });
+      }
+    }
   }
-  // Keep each bucket's chips in lexical order regardless of drag/restore order.
-  function sortChips(ctl) {
-    ctl.querySelectorAll('.chips').forEach(function (zone) {
-      Array.from(zone.querySelectorAll('.chip'))
-        .sort(function (a, b) { return a.textContent.trim().localeCompare(b.textContent.trim()); })
-        .forEach(function (chip) { zone.appendChild(chip); });
-    });
-  }
-  // Size Compare-with and Others proportionally to how many chips each holds, so the
-  // fuller bucket gets more width. Base holds one chip and stays content-sized. The
-  // grow factor is floored at 1 so an empty bucket keeps a usable, droppable width.
-  function resizeBuckets(ctl) {
-    const b = ctl.querySelector('.bucket-B');
-    const c = ctl.querySelector('.bucket-C');
-    const nB = ctl.querySelectorAll('.bucket-B .chip').length;
-    const nC = ctl.querySelectorAll('.bucket-C .chip').length;
-    if (b) { b.style.flexGrow = String(Math.max(1, nB)); }
-    if (c) { c.style.flexGrow = String(Math.max(1, nC)); }
+  // Parsers with limited family coverage (Dynamo v2): key -> {label, families}. Drives
+  // the reference-aware "not implemented" reason. Empty on pages without such a parser.
+  const PARSER_NI = window.__PARSER_NI || {};
+  // Show/clear a JS-driven "why n/a" line at the top of a cell's tooltip. Built in JS
+  // (not the server-rendered tooltip) so the reason can change with the Reference.
+  function setWhy(cell, text) {
+    let el = cell.querySelector('.cmp-why');
+    if (!text) { if (el) { el.remove(); } return; }
+    if (!el) {
+      const tip = cell.querySelector('.ttip');
+      if (!tip) { return; }
+      el = document.createElement('div');
+      el.className = 'cmp-why';
+      tip.insertBefore(el, tip.firstChild);
+    }
+    el.textContent = text;
   }
   const cmpDefaults = {};  // panel id -> {base, shown} captured before URL restore
   function _sameLayout(pid, base, shown) {
@@ -103,114 +155,110 @@
     if (!params.has('base_' + pid) && !params.has('cmp_' + pid)) { return; }  // keep defaults
     const base = params.get('base_' + pid);
     const inB = new Set((params.get('cmp_' + pid) || '').split(',').filter(Boolean));
-    const A = ctl.querySelector('.bucket-A .chips');
-    const B = ctl.querySelector('.bucket-B .chips');
-    const C = ctl.querySelector('.bucket-C .chips');
-    ctl.querySelectorAll('.chip').forEach(function (chip) {
-      const k = chip.dataset.cand;
-      if (k === base) { A.appendChild(chip); }
-      else if (inB.has(k)) { B.appendChild(chip); }
-      else { C.appendChild(chip); }
-    });
-  }
-  function updateSwap(ctl) {
-    const btn = ctl.querySelector('.cmp-swap');
-    if (!btn) { return; }
-    btn.hidden = !(ctl.querySelectorAll('.bucket-A .chip').length === 1
-      && ctl.querySelectorAll('.bucket-B .chip').length === 1);
+    ctl.querySelectorAll('input.cmp-ref').forEach(function (r) { r.checked = (r.value === base); });
+    ctl.querySelectorAll('input.cmp-on').forEach(function (cb) { cb.checked = inB.has(cb.value); });
   }
   function applyCtl(panel) {
     const ctl = panelCtl(panel);
     if (!ctl) { return; }
-    sortChips(ctl);
-    resizeBuckets(ctl);
     const base = ctlBase(ctl);
+    syncRefDisable(ctl, base);
     const shown = ctlShown(ctl).filter(function (k) { return k !== base; });
     const active = new Set((base ? [base] : []).concat(shown));
     const counts = { ok: 0, problem: 0, na: 0 };
-    panel.querySelectorAll('td.cell[data-cmp]').forEach(function (cell) {
-      let cmp;
-      try { cmp = JSON.parse(cell.getAttribute('data-cmp')); } catch (e) { return; }
-      cell.classList.remove('cmp-eq', 'cmp-leak', 'cmp-na', 'cmp-nobase');
+    // If the selected Reference is a parser with limited family coverage (e.g. the
+    // Dynamo v2 parser), ni holds {label, families}. A cell whose family is not in
+    // that list is "not implemented" — a different reason than case-level "not
+    // applicable", and it wins.
+    const ni = base ? PARSER_NI[base] : null;
+    // Cells carry data-cmp (compare payload) and, on the v2 page, data-family (for the
+    // reference-aware "not implemented" note). The v1 parity page has data-cmp only, so
+    // match either — otherwise v1 cells never get colored.
+    panel.querySelectorAll('td.cell[data-cmp], td.cell[data-family]').forEach(function (cell) {
+      // Cloned cells in the transposed mirror get colored like any other cell,
+      // but must not be tallied into the overview counts (they'd double them).
+      const countThis = !cell.closest('[data-transpose-table]');
+      let cmp = {};
+      const raw = cell.getAttribute('data-cmp');
+      if (raw) { try { cmp = JSON.parse(raw); } catch (e) { return; } }
+      cell.classList.remove('cmp-eq', 'cmp-leak', 'cmp-na', 'cmp-nobase', 'cmp-donly');
       const marker = cell.querySelector('.cmp-marker .marker-text');
+      const fam = cell.getAttribute('data-family') || '';
+      if (base && ni && ni.families.indexOf(fam) === -1) {
+        cell.classList.add('cmp-na'); if (marker) { marker.textContent = 'x'; }
+        setWhy(cell, ni.label + ' is not yet implemented for family “' + fam + '”');
+        if (countThis) { counts.na++; } toggleCands(cell, active, base); return;
+      }
+      setWhy(cell, '');
       const bd = base ? cmp[base] : null;
       if (!base) {
         cell.classList.add('cmp-nobase'); if (marker) { marker.textContent = ''; }
-        counts.na++; toggleCands(cell, active, base); return;
+        if (countThis) { counts.na++; } toggleCands(cell, active, base); return;
       }
       if (!bd || bd.na === 1) {
         cell.classList.add('cmp-na'); if (marker) { marker.textContent = 'n/a'; }
-        counts.na++; toggleCands(cell, active, base); return;
+        if (countThis) { counts.na++; } toggleCands(cell, active, base); return;
       }
       // Unavailable candidates never count toward the diff; still shown in tooltip.
       const avail = shown.map(function (k) { return cmp[k]; }).filter(function (o) { return o && o.na !== 1; });
       const diffs = avail.filter(function (o) { return o.sig !== bd.sig; }).length;
       const leak = bd.leak === 1;
-      const txt = avail.length === 0 ? '·' : (diffs === 0 ? '=' : String(diffs));
+      // GREEN = the Reference output is clean (no leaked tool-call markup). That holds
+      // whether or not any Compare is selected, so a lone Reference with 0 Compares is
+      // green too. The marker count is the number of selected Compares that diverge;
+      // with no comparable peer there is simply nothing to count (blank), not gray.
+      const donly = avail.length === 0;
+      // Δ suffix marks the number as a count of diverging Compare-with parsers,
+      // e.g. "2Δ"; "=" (all agree) and a lone leak "↯" carry no count.
+      const txt = donly ? '' : (diffs === 0 ? '=' : String(diffs) + 'Δ');
       if (marker) { marker.textContent = (leak ? '↯' : '') + txt; }
-      // Color = leak only: red = Base leaks markup, green = clean. Count is the number.
+      // Color = leak only: red = Reference leaks markup, green = clean.
       cell.classList.add(leak ? 'cmp-leak' : 'cmp-eq');
-      if (leak) { counts.problem++; } else { counts.ok++; }
+      if (countThis) { if (leak) { counts.problem++; } else { counts.ok++; } }
       toggleCands(cell, active, base);
     });
     panel.querySelectorAll('[data-overview-count]').forEach(function (el) {
       const k = el.dataset.overviewCount;
       el.textContent = String(k === 'todo' ? 0 : (counts[k] || 0));
     });
-    updateSwap(ctl);
     updateCompareUrl(panel, ctl);
   }
   function applyCompare() { const p = activePanel(); if (p) { applyCtl(p); } }
-  function swapChips(x, y) {
-    const xp = x.parentNode, xn = x.nextSibling, yp = y.parentNode, yn = y.nextSibling;
-    yp.insertBefore(x, yn === x ? xn : yn);
-    xp.insertBefore(y, xn === y ? yn : xn);
+  function _boxFor(ctl, val) {
+    return Array.prototype.find.call(
+      ctl.querySelectorAll('input.cmp-on'), function (x) { return x.value === val; }) || null;
   }
-  function initCompareDnd() {
-    let dragged = null;
-    document.querySelectorAll('.cmpctl .chip').forEach(function (chip) {
-      chip.addEventListener('dragstart', function (e) {
-        dragged = chip; chip.classList.add('dragging');
-        e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', chip.dataset.cand || '');
-      });
-      chip.addEventListener('dragend', function () {
-        chip.classList.remove('dragging'); dragged = null;
-        document.querySelectorAll('.chip-over').forEach(function (c) { c.classList.remove('chip-over'); });
-      });
-      // Drop a chip directly onto another chip in the same control = swap them —
-      // except in Others, which always just receives the chip (no swap).
-      const inOthers = function () { return chip.closest('.bucket').dataset.bucket === 'C'; };
-      chip.addEventListener('dragover', function (e) {
-        if (!inOthers() && dragged && dragged !== chip && chip.closest('.cmpctl') === dragged.closest('.cmpctl')) {
-          e.preventDefault(); e.stopPropagation(); chip.classList.add('chip-over');
+  // Picking a new Reference (starring a row): the starred row is the reference, so its
+  // Compare box shows pressed. If the row you just starred was the ONLY compare, the
+  // previous reference becomes the compare (a 1-vs-1 swap); otherwise the previous
+  // reference drops out of the comparison.
+  function handleRefChange(ctl) {
+    const newBase = ctlBase(ctl);
+    const oldBase = ctl.dataset.prevBase || '';
+    const checked = Array.prototype.map.call(
+      ctl.querySelectorAll('input.cmp-on:checked'), function (x) { return x.value; });
+    // Active compares before the switch = checked boxes minus the old ref's (its box is
+    // checked only as the reference's pressed state, not as a real compare).
+    const priorCompares = checked.filter(function (v) { return v !== oldBase; });
+    const isSwap = priorCompares.length === 1 && priorCompares[0] === newBase;
+    const newBox = _boxFor(ctl, newBase);
+    if (newBox) { newBox.checked = true; }
+    if (oldBase && oldBase !== newBase && !isSwap) {
+      const oldBox = _boxFor(ctl, oldBase);
+      if (oldBox) { oldBox.checked = false; }
+    }
+    ctl.dataset.prevBase = newBase || '';
+  }
+  // Re-color the panel whenever a Reference star or Compare checkbox toggles.
+  function initCompareInputs() {
+    document.querySelectorAll('.cmpctl').forEach(function (ctl) {
+      ctl.dataset.prevBase = ctlBase(ctl) || '';
+      ctl.addEventListener('change', function (e) {
+        if (e.target.matches('input.cmp-ref')) { handleRefChange(ctl); }
+        if (e.target.matches('input.cmp-ref, input.cmp-on')) {
+          const panel = ctl.closest('.tab-panel');
+          if (panel) { applyCtl(panel); }
         }
-      });
-      chip.addEventListener('dragleave', function () { chip.classList.remove('chip-over'); });
-      chip.addEventListener('drop', function (e) {
-        if (inOthers() || !dragged || dragged === chip || chip.closest('.cmpctl') !== dragged.closest('.cmpctl')) { return; }
-        e.preventDefault(); e.stopPropagation(); chip.classList.remove('chip-over');
-        swapChips(dragged, chip); applyCompare();
-      });
-    });
-    document.querySelectorAll('.cmpctl .bucket').forEach(function (b) {
-      const zone = b.querySelector('.chips');
-      b.addEventListener('dragover', function (e) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; b.classList.add('drop-hover'); });
-      b.addEventListener('dragleave', function () { b.classList.remove('drop-hover'); });
-      b.addEventListener('drop', function (e) {
-        e.preventDefault(); b.classList.remove('drop-hover');
-        if (!dragged || dragged.closest('.cmpctl') !== b.closest('.cmpctl')) { return; }
-        if (b.dataset.bucket === 'A') {
-          const cur = b.querySelector('.chip');
-          if (cur && cur !== dragged) { b.closest('.cmpctl').querySelector('.bucket-B .chips').appendChild(cur); }
-        }
-        zone.appendChild(dragged); applyCompare();
-      });
-    });
-    document.querySelectorAll('.cmpctl .cmp-swap').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        const ctl = btn.closest('.cmpctl');
-        const a = ctl.querySelector('.bucket-A .chip'), bch = ctl.querySelector('.bucket-B .chip');
-        if (a && bch) { swapChips(a, bch); applyCompare(); }
       });
     });
   }
@@ -223,10 +271,12 @@
       cmpDefaults[panel.id] = { base: ctlBase(ctl), shown: ctlShown(ctl).slice() };
       restoreCtlFromUrl(panel, ctl);
     });
-    initCompareDnd();
+    initCompareInputs();
     document.querySelectorAll('.tab-panel').forEach(function (panel) {
       if (panelCtl(panel)) { applyCtl(panel); }
     });
+    // Compare model applied — reveal the real colors (see body.cmp-loading CSS).
+    document.body.classList.remove('cmp-loading');
   }
 
   function readDetailed() {
@@ -305,6 +355,8 @@
       const versioned = panel.dataset.hasVersions === 'true';
       const counts = {ok: 0, problem: 0, todo: 0, na: 0};
       panel.querySelectorAll('td.cell').forEach(function (cell) {
+        // Skip cloned cells in the transposed mirror; they'd double the tally.
+        if (cell.closest('[data-transpose-table]')) { return; }
         const alias = legacyParserAliases[parser];
         // On a versioned tab, prefer the active version's status; fall back to the
         // pinned attr (and legacy alias) for cells without per-version data.
@@ -639,9 +691,13 @@
     ttip.style.opacity = '';
   }
 
-  document.querySelectorAll('td.cell, td.parser').forEach(function (cell) {
+  function attachTooltip(cell) {
     const ttip = cell.querySelector('.ttip');
     if (!ttip) return;
+    // cloneNode copies the wired flag; guard so re-wiring a clone is a no-op and
+    // originals aren't double-wired.
+    if (cell.dataset.ttipWired === '1') return;
+    cell.dataset.ttipWired = '1';
 
     let showTimer = null;
     let hideTimer = null;
@@ -696,5 +752,245 @@
     cell.addEventListener('pointerleave', scheduleHide);
     cell.addEventListener('focusin', scheduleShow);
     cell.addEventListener('focusout', scheduleHide);
-  });
+  }
+  document.querySelectorAll('td.cell, td.parser').forEach(attachTooltip);
+
+  // ---- Transpose view (DIS-2280) ----
+  // Build a transposed mirror of each panel's table on demand: models become
+  // columns (rotated CCW headers), test cases become rows. Data cells are cloned
+  // from the server-rendered table, so they keep their data-cmp payload and the
+  // compare/coloring engine (applyCtl) recolors them for free — the mirror lives
+  // in the same panel, so applyCtl's cell query already covers it.
+  const transposeToggle = document.querySelector('[data-transpose-toggle]');
+
+  function readTransposeMode() {
+    const requested = new URLSearchParams(window.location.search).get('transpose');
+    return requested === '1' || requested === 'true';
+  }
+
+  function updateTransposeUrl(enabled) {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('transpose');
+    if (enabled) {
+      url.searchParams.set('transpose', '1');
+    }
+    window.history.replaceState(null, '', url.toString());
+  }
+
+  function buildTransposed(table) {
+    const head = table.tHead;
+    const headRows = head ? Array.from(head.rows) : [];
+    const body = table.tBodies[0];
+    if (headRows.length < 2 || !body) {
+      return null;
+    }
+
+    // Case-group key -> human label (from the group-header toggle buttons).
+    const groupLabel = {};
+    Array.from(headRows[0].querySelectorAll('th.case-group')).forEach(function (th) {
+      const btn = th.querySelector('[data-col-label]');
+      groupLabel[th.dataset.colControlGroup] = btn ? btn.dataset.colLabel : th.textContent.trim();
+    });
+    // Ordered sub-cases (the new rows). Each carries its case-group key.
+    const subThs = Array.from(headRows[1].querySelectorAll('th.case-sub'));
+
+    // Models (the new columns), grouped by the body's section banners.
+    const models = [];
+    let curSection = null;
+    Array.from(body.rows).forEach(function (row) {
+      if (row.classList.contains('section')) {
+        curSection = row.textContent.trim();
+        return;
+      }
+      const modelTd = row.querySelector('td.model');
+      if (!modelTd) return;
+      models.push({
+        name: modelTd.textContent.trim(),
+        section: curSection,
+        parserTd: row.querySelector('td.parser'),
+        cells: Array.from(row.querySelectorAll('td.cell'))
+      });
+    });
+    if (!models.length) {
+      return null;
+    }
+    const nModels = models.length;
+
+    const out = document.createElement('table');
+    out.className = 'transpose-table';
+    out.setAttribute('data-transpose-table', '');
+
+    const outHead = out.createTHead();
+
+    // Optional model-section banner row (e.g. "Top-N models" / "Others").
+    const sections = [];
+    models.forEach(function (m) {
+      const last = sections[sections.length - 1];
+      if (last && last.label === m.section) {
+        last.count += 1;
+      } else {
+        sections.push({label: m.section, count: 1});
+      }
+    });
+    if (sections.some(function (s) { return s.label; })) {
+      const r0 = outHead.insertRow();
+      const corner = document.createElement('th');
+      corner.className = 'tcorner-case';
+      r0.appendChild(corner);
+      sections.forEach(function (s) {
+        const th = document.createElement('th');
+        th.className = 'tsection-col';
+        th.colSpan = s.count;
+        th.textContent = s.label || '';
+        r0.appendChild(th);
+      });
+    }
+
+    // Rotated model-name header row. The corner cell labels the case axis with
+    // the panel's case prefix (e.g. "Case TOOLCALLING.batch.*"), rotated the same
+    // way as the model names.
+    const r1 = outHead.insertRow();
+    const cornerCase = document.createElement('th');
+    cornerCase.className = 'tcol-model tcorner-case';
+    let prefix = (table.dataset.casePrefix || '').trim();
+    const mode = (table.dataset.mode || '').trim();
+    // Tool-calling prefixes already carry the case namespace ("TOOLCALLING.batch.");
+    // reasoning's is family-only ("REASONING."), where the namespace is the mode.
+    // Splice the mode in only for that family-only case.
+    if (mode && prefix.split('.').filter(Boolean).length === 1) {
+      prefix = prefix + mode + '.';
+    }
+    const caseLabel = document.createElement('span');
+    caseLabel.className = 'tcol-model-label';
+    const caseLabelLine = document.createElement('span');
+    caseLabelLine.className = 'tcol-model-line';
+    caseLabelLine.textContent = prefix ? ('Case ' + prefix + '*') : 'Case';
+    caseLabel.appendChild(caseLabelLine);
+    const cornerInner = document.createElement('div');
+    cornerInner.className = 'tcol-model-inner';
+    cornerInner.appendChild(caseLabel);
+    cornerCase.appendChild(cornerInner);
+    r1.appendChild(cornerCase);
+    models.forEach(function (m) {
+      const th = document.createElement('th');
+      th.className = 'tcol-model';
+      const label = document.createElement('span');
+      label.className = 'tcol-model-label';
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'tcol-model-name';
+      nameSpan.textContent = m.name;
+      label.appendChild(nameSpan);
+      // Second line: the tool-calling family, lifted from the original parser
+      // cell (without its tooltip). Clone the markup (not just text) so the
+      // parser-source link stays clickable, exactly like the non-transposed view.
+      if (m.parserTd) {
+        const famClone = m.parserTd.cloneNode(true);
+        const famTip = famClone.querySelector('.ttip');
+        if (famTip) famTip.remove();
+        if (famClone.textContent.trim()) {
+          const famSpan = document.createElement('span');
+          famSpan.className = 'tcol-model-family';
+          while (famClone.firstChild) {
+            famSpan.appendChild(famClone.firstChild);
+          }
+          label.appendChild(famSpan);
+        }
+      }
+      const inner = document.createElement('div');
+      inner.className = 'tcol-model-inner';
+      inner.appendChild(label);
+      th.appendChild(inner);
+      // Same hover tooltip as the original parser cell.
+      const srcTip = m.parserTd && m.parserTd.querySelector('.ttip');
+      if (srcTip) {
+        const tipClone = srcTip.cloneNode(true);
+        th.appendChild(tipClone);
+        attachTooltip(th);
+      }
+      r1.appendChild(th);
+    });
+
+    // One body row per sub-case, with a section banner when the group changes.
+    const outBody = out.createTBody();
+    let curGroup = null;
+    subThs.forEach(function (subTh, idx) {
+      const group = subTh.dataset.colHideGroup;
+      if (group !== curGroup) {
+        curGroup = group;
+        const sr = outBody.insertRow();
+        sr.className = 'section';
+        if (group) { sr.setAttribute('data-col-hide-group', group); }
+        const td = document.createElement('td');
+        td.colSpan = 1 + nModels;
+        td.textContent = groupLabel[group] || group || '';
+        sr.appendChild(td);
+      }
+      const tr = outBody.insertRow();
+      // Carry the case-group key so applyColumnState hides this row (and its section
+      // banner) when that group is collapsed via the column toggles — keeps the
+      // transposed view in sync with the original table's show/hide state.
+      if (group) { tr.setAttribute('data-col-hide-group', group); }
+      const caseTh = document.createElement('th');
+      caseTh.className = 'trow-case';
+      const link = subTh.querySelector('a');
+      caseTh.appendChild(link ? link.cloneNode(true) : document.createTextNode(subTh.textContent.trim()));
+      tr.appendChild(caseTh);
+      models.forEach(function (m) {
+        const src = m.cells[idx];
+        if (src) {
+          const clone = src.cloneNode(true);
+          clone.classList.remove('col-hidden');
+          clone.removeAttribute('data-col-hide-group');
+          // cloneNode copies the "already wired" flag; clear it so the clone
+          // gets its own tooltip listeners.
+          clone.removeAttribute('data-ttip-wired');
+          delete clone.dataset.ttipWired;
+          tr.appendChild(clone);
+          attachTooltip(clone);
+        } else {
+          const td = document.createElement('td');
+          td.className = 'cell na';
+          tr.appendChild(td);
+        }
+      });
+    });
+
+    return out;
+  }
+
+  function ensureTransposed(panel) {
+    if (panel.querySelector('table[data-transpose-table]')) return;
+    const orig = panel.querySelector('table[data-parity-table]');
+    if (!orig) return;
+    const transposed = buildTransposed(orig);
+    if (transposed) {
+      orig.insertAdjacentElement('afterend', transposed);
+      // Color the freshly-cloned cells with the panel's current Reference/Compare
+      // selection (applyCtl covers the mirror since it lives in the panel).
+      if (panelCtl(panel)) { applyCtl(panel); }
+      // Apply the current column-collapse state so a case group hidden in the
+      // original table stays hidden (as rows) in the freshly-built mirror.
+      applyColumnState(visibleColumns, false);
+    }
+  }
+
+  function applyTransposeMode(enabled, shouldUpdateUrl) {
+    document.body.classList.toggle('transpose-mode', Boolean(enabled));
+    if (transposeToggle) {
+      transposeToggle.checked = Boolean(enabled);
+    }
+    if (enabled) {
+      document.querySelectorAll('.tab-panel').forEach(ensureTransposed);
+    }
+    if (shouldUpdateUrl) {
+      updateTransposeUrl(Boolean(enabled));
+    }
+  }
+
+  applyTransposeMode(readTransposeMode(), false);
+  if (transposeToggle) {
+    transposeToggle.addEventListener('change', function () {
+      applyTransposeMode(transposeToggle.checked, true);
+    });
+  }
 })();
