@@ -712,7 +712,15 @@ def _cand_section_body(block, family: str | None = None) -> str:
     body = _format_output_block_html(block, family)
     note = _explanation(block)
     if note:
-        body += "\nexplanation: " + html_lib.escape(str(note))
+        # Muted note styling (.ttip-note) so the provenance/divergence note reads
+        # as an annotation on the cell, NOT as part of the parser's output — in
+        # the assembled chart row it sits directly under normal_text/calls and
+        # unstyled text was indistinguishable from emitted output.
+        body += (
+            '\n<span class="ttip-note">explanation: '
+            + html_lib.escape(str(note))
+            + "</span>"
+        )
     return body
 
 
@@ -1484,6 +1492,7 @@ _V2_STREAM_PARSER_CELLS: dict[str, tuple[str, str, str]] = {
     "glm47": ("Glm47ToolStreamParser text path", "glm47.rs", "GLM XML"),
     "kimi_k2": ("KimiK2ToolStreamParser text path", "kimi_k2.rs", "Kimi XML"),
     "minimax_m2": ("MiniMaxM2ToolStreamParser text path", "minimax_m2.rs", "MiniMax XML"),
+    "minimax_m3": ("MiniMaxM3ToolStreamParser text path", "minimax_m3.rs", "MiniMax-M3 XML"),
     "qwen3_coder": ("Qwen3CoderToolStreamParser text path", "qwen3_coder.rs", "Qwen XML"),
 }
 
@@ -2403,14 +2412,34 @@ def _stream_version_status_map() -> dict[tuple[str, str], dict[str, dict[str, di
     return result
 
 
+def _canon_call_for_sig(call):
+    """A call with its `arguments` decoded when it is a JSON string, so the
+    signature compares argument VALUES, not serialization bytes. The v1 parser
+    serializes arguments from a HashMap (key order varies per capture) while the
+    v2 stream parser pins source order — byte-comparing the strings flagged a
+    divergence on every multi-arg call even when the decoded values were
+    identical. `sort_keys=True` in the dump then makes key order irrelevant;
+    genuine value/type differences (e.g. `"2"` vs `2`) still differ."""
+    if not isinstance(call, dict):
+        return call
+    args = call.get("arguments")
+    if isinstance(args, str):
+        try:
+            return {**call, "arguments": json.loads(args)}
+        except (json.JSONDecodeError, ValueError):
+            return call
+    return call
+
+
 def _candidate_sig(block) -> str:
     """Canonical signature of a candidate's output; equal signatures = same output."""
     if not isinstance(block, dict) or "unavailable" in block:
         return "na"
     if "error" in block:
         return f"err:{block.get('error')}"
+    calls = [_canon_call_for_sig(c) for c in block.get("calls") or []]
     return json.dumps(
-        {"calls": block.get("calls") or [], "normal_text": block.get("normal_text") or ""},
+        {"calls": calls, "normal_text": block.get("normal_text") or ""},
         sort_keys=True, ensure_ascii=False,
     )
 

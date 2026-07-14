@@ -182,8 +182,12 @@ def refresh_batch(v1_ver: str) -> None:
             elif mode == "stream":
                 # Legacy v1 jail expected (assembled): feed the per-chunk delta_text
                 # through JailedStream + the v1 batch parser, like the v1 page did.
+                # Tool schemas ride along so the batch parse coerces argument types.
                 cases_in = {
-                    cid: [ch.get("delta_text", "") for ch in (c.get("chunks") or [])]
+                    cid: {
+                        "chunks": [ch.get("delta_text", "") for ch in (c.get("chunks") or [])],
+                        "tools": c.get("tools") or [],
+                    }
                     for cid, c in (src.get("cases") or {}).items()
                     if isinstance(c, dict) and c.get("chunks")
                 }
@@ -288,7 +292,7 @@ def refresh_batch_on_stream(v2_ver: str) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
-        "modes", nargs="*", default=[], choices=["batch", "stream", "batch-on-stream"],
+        "modes", nargs="*", choices=[[], "batch", "stream", "batch-on-stream"],
         help="subset of captures to refresh (default: all)",
     )
     args = ap.parse_args()
