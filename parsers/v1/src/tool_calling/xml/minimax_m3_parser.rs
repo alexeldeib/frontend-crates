@@ -56,46 +56,97 @@ pub fn try_tool_call_parse_minimax_m3(
     config: &MiniMaxM3ParserConfig,
     tools: Option<&[ToolDefinition]>,
 ) -> anyhow::Result<(Vec<ToolCallResponse>, Option<String>)> {
-    let Some(start_pos) = message.find(tool_call_start(config).as_str()) else {
-        if let Some(marker_idx) = first_orphan_minimax_m3_marker_index(message, config) {
-            if let Some((prefix, calls)) = recover_orphan_invokes_in_span(message, config, tools)? {
-                return Ok((calls, Some(prefix)));
-            }
-            return Ok((vec![], Some(message[..marker_idx].trim_end().to_string())));
-        }
-        return Ok((vec![], Some(message.to_string())));
-    };
-
-    let pre_block_span = &message[..start_pos];
-    let (prefix, mut calls) = if let Some((prefix, recovered)) =
-        recover_orphan_invokes_in_span(pre_block_span, config, tools)?
-    {
-        (prefix, recovered)
-    } else if let Some(marker_idx) = first_orphan_minimax_m3_marker_index(pre_block_span, config) {
-        (
-            pre_block_span[..marker_idx].trim_end().to_string(),
-            Vec::new(),
-        )
-    } else {
-        (pre_block_span.to_string(), Vec::new())
-    };
-
-    let block_start = start_pos + tool_call_start(config).len();
+    // `normal_text` is the model text with each complete tool-call block removed
+    // (from `]<]minimax[>[<tool_call>` through `]<]minimax[>[</tool_call>`),
+    // keeping the surrounding text verbatim: the prefix before the first block,
+    // text BETWEEN blocks, and text AFTER the last block. Text INSIDE a block
+    // that is not a complete invoke (narration between invokes, junk like batch
+    // case 4.a) is part of the markup block and stays dropped, like the other
+    // families. Malformed / unterminated blocks keep drop-without-leak: their
+    // markup never reaches normal_text.
+    let tool_call_start = tool_call_start(config);
     let tool_call_end = tool_call_end(config);
-    let (block, complete) =
-        if let Some(end_rel) = message[block_start..].find(tool_call_end.as_str()) {
-            let block_end = block_start + end_rel;
-            (&message[block_start..block_end], true)
-        } else {
-            (&message[block_start..], false)
-        };
+    let mut calls: Vec<ToolCallResponse> = Vec::new();
+    let mut normal_parts: Vec<String> = Vec::new();
+    let mut cursor = 0;
 
-    if !complete && !config.allow_eof_recovery {
-        return Ok((vec![], Some(prefix)));
+    while cursor <= message.len() {
+        let Some(start_rel) = message[cursor..].find(tool_call_start.as_str()) else {
+            // No more blocks: this gap is the prefix (no block at all), the text
+            // after the last `</tool_call>`, or both. A bare invoke run in the
+            // gap (missing `<tool_call>` opener — cases 5.b/5.g) is recovered;
+            // otherwise a stray orphan marker is dropped without leaking, keeping
+            // the text before it.
+            push_gap(
+                &message[cursor..],
+                config,
+                tools,
+                &mut normal_parts,
+                &mut calls,
+            )?;
+            break;
+        };
+        let abs_start = cursor + start_rel;
+        push_gap(
+            &message[cursor..abs_start],
+            config,
+            tools,
+            &mut normal_parts,
+            &mut calls,
+        )?;
+
+        let block_start = abs_start + tool_call_start.len();
+        match message[block_start..].find(tool_call_end.as_str()) {
+            Some(end_rel) => {
+                calls.extend(parse_invokes(
+                    &message[block_start..block_start + end_rel],
+                    config,
+                    tools,
+                )?);
+                cursor = block_start + end_rel + tool_call_end.len();
+            }
+            None => {
+                // Unterminated block: parse it only under EOF recovery; either
+                // way its markup tail never leaks into normal_text.
+                if config.allow_eof_recovery {
+                    calls.extend(parse_invokes(&message[block_start..], config, tools)?);
+                }
+                break;
+            }
+        }
     }
 
-    calls.extend(parse_invokes(block, config, tools)?);
-    Ok((calls, Some(prefix)))
+    let normal_text = normal_parts.join("");
+    let normal_text = if calls.is_empty() {
+        normal_text.trim().to_string()
+    } else {
+        normal_text
+    };
+    Ok((calls, Some(normal_text)))
+}
+
+/// Fold one between-block gap into `normal_parts` / `calls`: recover a bare
+/// invoke run (keeping its prose prefix), else drop from a stray orphan marker
+/// onward (drop-without-leak), else keep the gap text verbatim.
+fn push_gap(
+    gap: &str,
+    config: &MiniMaxM3ParserConfig,
+    tools: Option<&[ToolDefinition]>,
+    normal_parts: &mut Vec<String>,
+    calls: &mut Vec<ToolCallResponse>,
+) -> anyhow::Result<()> {
+    if gap.is_empty() {
+        return Ok(());
+    }
+    if let Some((prefix, recovered)) = recover_orphan_invokes_in_span(gap, config, tools)? {
+        normal_parts.push(prefix);
+        calls.extend(recovered);
+    } else if let Some(marker_idx) = first_orphan_minimax_m3_marker_index(gap, config) {
+        normal_parts.push(gap[..marker_idx].trim_end().to_string());
+    } else {
+        normal_parts.push(gap.to_string());
+    }
+    Ok(())
 }
 
 // Builds the configured outer tool-call start marker.

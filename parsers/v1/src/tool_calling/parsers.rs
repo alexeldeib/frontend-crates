@@ -3672,7 +3672,9 @@ weather forecasting
         let (result, content) = detect_and_parse_tool_call(input, Some("minimax_m3"), None)
             .await
             .unwrap();
-        assert_eq!(content, Some("I'll check. ".to_string()));
+        // Surrounding text is preserved verbatim: prefix AND the text after the
+        // closing `</tool_call>` (previously dropped).
+        assert_eq!(content, Some("I'll check.  trailing text".to_string()));
         assert_eq!(result.len(), 1);
         let (name, args) = extract_name_and_args(result[0].clone());
         assert_eq!(name, "get_weather");

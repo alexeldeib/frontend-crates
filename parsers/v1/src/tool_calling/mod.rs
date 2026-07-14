@@ -64,4 +64,5 @@ pub use tools::{
 };
 pub use xml::try_tool_call_parse_glm47;
 pub use xml::try_tool_call_parse_kimi_k2;
+pub use xml::try_tool_call_parse_minimax_m3;
 pub use xml::try_tool_call_parse_xml;

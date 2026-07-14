@@ -10,6 +10,7 @@ mod harmony_grammar;
 mod harmony_recovery;
 pub mod kimi_k2;
 pub mod minimax_m2;
+pub mod minimax_m3;
 pub mod qwen3_coder;
 pub mod traits;
 
@@ -22,6 +23,7 @@ use self::glm47::Glm47ToolStreamParser;
 use self::harmony::HarmonyToolStreamParser;
 use self::kimi_k2::KimiK2ToolStreamParser;
 use self::minimax_m2::MiniMaxM2ToolStreamParser;
+use self::minimax_m3::MiniMaxM3ToolStreamParser;
 use self::qwen3_coder::Qwen3CoderToolStreamParser;
 
 /// Create the Dynamo v2 tool parser for a conformance family.
@@ -34,6 +36,7 @@ pub fn create_tool_parser_for_family(
         "deepseek_v4" => DeepSeekV4ToolStreamParser::create(tools),
         "qwen3_coder" => Qwen3CoderToolStreamParser::create(tools),
         "minimax_m2" => MiniMaxM2ToolStreamParser::create(tools),
+        "minimax_m3" => MiniMaxM3ToolStreamParser::create(tools),
         "gemma4" => Gemma4ToolStreamParser::create(tools),
         "glm47" => Glm47ToolStreamParser::create(tools),
         "kimi_k2" => KimiK2ToolStreamParser::create(tools),

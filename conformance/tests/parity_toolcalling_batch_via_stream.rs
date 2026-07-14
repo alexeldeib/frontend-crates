@@ -92,6 +92,10 @@ fn toolcalling_batch_via_stream_parity() {
     //   deepseek_v4 / gemma4 / kimi_k2 5.g: bare invoke after prose — the stream
     //        parser recovers it while the strict batch parser drops it (recovery
     //        divergence).
+    //   minimax_m3 5.g (calls IDENTICAL, normal_text only): both recover the bare
+    //        invoke, but the v1 recovery trims the prose prefix's trailing space
+    //        ("I will check that.") while the stream parser emits it verbatim
+    //        ("I will check that. ").
     //   gemma4 8.a/8.b/8.d (calls IDENTICAL, normal_text only): the streaming
     //        parser faithfully emits the model's text AROUND the tool calls
     //        VERBATIM, while the v1 batch parser's gemma4 recovery path drops the
@@ -116,6 +120,8 @@ fn toolcalling_batch_via_stream_parity() {
         "kimi_k2:TOOLCALLING.batch.5.g",
         "kimi_k2:TOOLCALLING.batch.9.b",
         "minimax_m2:TOOLCALLING.batch.9.b",
+        "minimax_m3:TOOLCALLING.batch.5.g",
+        "minimax_m3:TOOLCALLING.batch.9.b",
     ]
     .into_iter()
     .collect();
