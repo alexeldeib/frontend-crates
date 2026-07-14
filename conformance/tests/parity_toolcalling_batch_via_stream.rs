@@ -103,11 +103,24 @@ fn toolcalling_batch_via_stream_parity() {
     //        vs batch "".
     //   *:9.b (whitespace-only input "   ", no calls): the streaming parsers pass
     //        the bare whitespace through as normal_text while the v1 batch parser
-    //        returns "" — except harmony, where it is INVERTED (the harmony stream
-    //        parser holds bare whitespace back, the v1 batch parser returns it).
+    //        returns "" (harmony now agrees on both sides and has no entry).
+    //   *:5.f (bare call + orphan close, then a full block, "\n" between): the
+    //        stream parser clears its suppression latch at the orphan
+    //        `</tool_call>` close — matching the v1 JAIL, which emits the
+    //        separator — while the strict batch parser drops it.
+    //   harmony 8.a/8.b/8.d (calls IDENTICAL, normal_text only): the stream parser
+    //        keeps the boundary space touching a stripped Harmony envelope
+    //        verbatim (matching the v1 jail passthrough); the v1 batch parser
+    //        trims it.
+    //   harmony 3 (NOT whitespace — whole answer): a bare-prose response with no
+    //        Harmony framing at all. The stream parser passes the user's answer
+    //        through (matching the v1 jail; dropping it was the DIS-2322 class);
+    //        the strict v1 batch parser still returns "". Text loss is the worse
+    //        failure, so the stream side keeps the text.
     //   The streaming peers stream surrounding text the same way, and the HTML
     //   batch-on-stream tab compares calls only, so all of these render green there.
     let known_divergences: std::collections::BTreeSet<&str> = [
+        "deepseek_v4:TOOLCALLING.batch.5.f",
         "deepseek_v4:TOOLCALLING.batch.5.g",
         "deepseek_v4:TOOLCALLING.batch.9.b",
         "gemma4:TOOLCALLING.batch.5.g",
@@ -116,12 +129,18 @@ fn toolcalling_batch_via_stream_parity() {
         "gemma4:TOOLCALLING.batch.8.d",
         "gemma4:TOOLCALLING.batch.9.b",
         "glm47:TOOLCALLING.batch.9.b",
-        "harmony:TOOLCALLING.batch.9.b",
+        "harmony:TOOLCALLING.batch.3",
+        "harmony:TOOLCALLING.batch.8.a",
+        "harmony:TOOLCALLING.batch.8.b",
+        "harmony:TOOLCALLING.batch.8.d",
         "kimi_k2:TOOLCALLING.batch.5.g",
         "kimi_k2:TOOLCALLING.batch.9.b",
+        "minimax_m2:TOOLCALLING.batch.5.f",
         "minimax_m2:TOOLCALLING.batch.9.b",
+        "minimax_m3:TOOLCALLING.batch.5.f",
         "minimax_m3:TOOLCALLING.batch.5.g",
         "minimax_m3:TOOLCALLING.batch.9.b",
+        "qwen3_coder:TOOLCALLING.batch.5.f",
     ]
     .into_iter()
     .collect();

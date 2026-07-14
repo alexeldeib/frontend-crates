@@ -639,9 +639,13 @@ mod tests {
         let mut parser = HarmonyToolStreamParser::new().expect("new");
         let result = parse_complete_for_test(&mut parser, text);
 
+        // Surrounding text is kept VERBATIM (incl. the trailing space before the
+        // second call's envelope) — matching the v1 jail passthrough. The v1
+        // BATCH parser trims that boundary space; the divergence is documented
+        // in the batch-via-stream allowlist.
         assert_eq!(
             result.normal_text,
-            "I will check the weather.  Then check LA weather."
+            "I will check the weather.  Then check LA weather. "
         );
         assert_eq!(result.calls.len(), 2);
         let first: serde_json::Value =

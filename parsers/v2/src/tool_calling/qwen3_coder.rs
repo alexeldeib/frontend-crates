@@ -116,6 +116,25 @@ impl Qwen3CoderToolStreamParser {
                 continue;
             }
 
+            // A recovered bare function suppresses its trailing markup; its stray
+            // `</tool_call>` close (cases 5.b/5.f) ENDS that markup context.
+            // Consume the orphan close and clear the latch so inter-call text —
+            // e.g. the single separator space before the next `<tool_call>` —
+            // flows through verbatim, matching the v1 jail+batch output.
+            if self.suppress_normal_text
+                && let Some(pos) = self.buffer.find(BLOCK_END)
+            {
+                let next_open = [BLOCK_START, FUNCTION_START]
+                    .into_iter()
+                    .filter_map(|m| self.buffer.find(m))
+                    .min();
+                if next_open.is_none_or(|open| pos < open) {
+                    self.buffer.drain(..pos + BLOCK_END.len());
+                    self.suppress_normal_text = false;
+                    continue;
+                }
+            }
+
             let block_start = self.buffer.find(BLOCK_START);
             let bare_function_start = self.buffer.find(FUNCTION_START);
             let next_marker = match (block_start, bare_function_start) {

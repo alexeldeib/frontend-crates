@@ -146,6 +146,26 @@ impl DeepSeekV4ToolStreamParser {
                 continue;
             }
 
+            // A recovered bare invoke latches suppression for its orphan markup
+            // tail; the stray `</｜DSML｜tool_calls>` close (cases 5.b/5.f) ENDS
+            // that markup context. Consume the orphan close and clear the latch
+            // so inter-call text — e.g. the single separator space before the
+            // next block — flows through verbatim, matching the v1 jail+batch
+            // output.
+            if self.suppress_normal_text
+                && let Some(pos) = self.buffer.find(BLOCK_END)
+            {
+                let next_open = [BLOCK_START, INVOKE_START_PREFIX]
+                    .into_iter()
+                    .filter_map(|m| self.buffer.find(m))
+                    .min();
+                if next_open.is_none_or(|open| pos < open) {
+                    self.buffer.drain(..pos + BLOCK_END.len());
+                    self.suppress_normal_text = false;
+                    continue;
+                }
+            }
+
             let block_start = self.buffer.find(BLOCK_START);
             let bare_invoke_start = self.buffer.find(INVOKE_START_PREFIX);
             let next_marker = match (block_start, bare_invoke_start) {
