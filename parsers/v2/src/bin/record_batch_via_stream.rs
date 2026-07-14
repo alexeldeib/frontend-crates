@@ -53,12 +53,21 @@ fn main() -> anyhow::Result<()> {
         .map(|f| vec![f.as_str()])
         .unwrap_or_else(|| vec!["harmony", "deepseek_v4"]);
 
-    let fixture_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        // this crate lives at parsers/v2, so the repo root is two levels up
-        .parent()
-        .and_then(|p| p.parent())
-        .expect("parsers/v2 is two levels below the repo root")
-        .join("conformance/toolcalling/fixtures-v1");
+    // `--root <dir>`: a `<family>/TOOLCALLING.batch*.yaml` tree carrying
+    // `model_text` + `tools` per case (e.g. `fixtures-batch-v1/inputs/` from the
+    // fixture cache). Default: the legacy staged flat tree.
+    let fixture_root = args
+        .windows(2)
+        .find(|pair| pair[0] == "--root")
+        .map(|pair| PathBuf::from(&pair[1]))
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                // this crate lives at parsers/v2, so the repo root is two levels up
+                .parent()
+                .and_then(|p| p.parent())
+                .expect("parsers/v2 is two levels below the repo root")
+                .join("conformance/toolcalling/fixtures-v1")
+        });
 
     let mut nested = BTreeMap::new();
     for family in families {

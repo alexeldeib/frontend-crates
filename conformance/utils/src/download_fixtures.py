@@ -294,6 +294,19 @@ def main():
             else:
                 shutil.copy2(str(item), str(dst))
 
+        # Prune shards that LEFT the manifest (e.g. a dynamo-<ver> capture dir
+        # replaced by a re-record at a newer crate version). Each shard extracts
+        # to its `<path minus .tar.gz>` subtree; without this, the stale tree
+        # survives the copy above and sits next to the new version dir.
+        new_paths = {s["path"] for s in shards}
+        for old_path in _prev_state.get("shards", {}):
+            if old_path in new_paths:
+                continue
+            stale_tree = snap_dir / old_path[: -len(".tar.gz")]
+            if stale_tree.exists():
+                print(f"  [prune] {old_path} (left the manifest)", file=sys.stderr)
+                shutil.rmtree(stale_tree)
+
         # Download and extract only changed shards
         for s in stale:
             local = download_blob(token, repo_id, s["path"], verbose=args.verbose)

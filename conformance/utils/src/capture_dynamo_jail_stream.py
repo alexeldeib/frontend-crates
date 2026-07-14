@@ -49,7 +49,9 @@ PARSER_NAME = {"harmony_text": "harmony"}
 
 
 def dynamo_v1_version(repo: Path) -> str:
-    m = re.search(r'^version\s*=\s*"([^"]+)"', (repo / "parsers" / "Cargo.toml").read_text(), re.M)
+    m = re.search(
+        r'^version\s*=\s*"([^"]+)"', (repo / "parsers" / "v1" / "Cargo.toml").read_text(), re.M
+    )
     return m.group(1)
 
 
