@@ -63,19 +63,15 @@ struct ExpCall {
 #[test]
 fn toolcalling_batch_via_stream_parity() {
     // Versioned corpus (inputs/ + <impl>-<version>/): read the shared inputs and fold
-    // Dynamo v1's `expected.dynamo` from the (single) dynamo-<version>/ dir back in.
+    // Dynamo v1's `expected.dynamo` from the dynamo-<version>/ dirs back in,
+    // ASCENDING — old version dirs are capture history, the latest wins per case.
     let batch_root = common::ensure_fixtures().join("toolcalling/fixtures-batch-v1");
     let inputs_root = batch_root.join("inputs");
-    let dyn_dir = std::fs::read_dir(batch_root)
-        .unwrap()
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .find(|p| {
-            p.is_dir()
-                && p.file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|n| n.starts_with("dynamo-"))
-        })
-        .expect("no dynamo-<version> dir under fixtures-batch-v1");
+    let dyn_dirs = common::version_dirs_ascending(&batch_root, "dynamo-");
+    assert!(
+        !dyn_dirs.is_empty(),
+        "no dynamo-<version> dir under fixtures-batch-v1"
+    );
     let mut files = Vec::new();
     collect_yaml(&inputs_root, &mut files);
     files.sort();
@@ -172,13 +168,15 @@ fn toolcalling_batch_via_stream_parity() {
             continue;
         }
         let rel = path.strip_prefix(&inputs_root).unwrap();
-        let dyn_fx = std::fs::read_to_string(dyn_dir.join(rel))
-            .ok()
-            .and_then(|t| serde_yaml::from_str::<Fixture>(&t).ok());
-        if let Some(dfx) = dyn_fx {
-            for (cid, dcase) in dfx.cases {
-                if let (Some(c), Some(exp)) = (fx.cases.get_mut(&cid), dcase.expected) {
-                    c.expected = Some(exp);
+        for dyn_dir in &dyn_dirs {
+            let dyn_fx = std::fs::read_to_string(dyn_dir.join(rel))
+                .ok()
+                .and_then(|t| serde_yaml::from_str::<Fixture>(&t).ok());
+            if let Some(dfx) = dyn_fx {
+                for (cid, dcase) in dfx.cases {
+                    if let (Some(c), Some(exp)) = (fx.cases.get_mut(&cid), dcase.expected) {
+                        c.expected = Some(exp);
+                    }
                 }
             }
         }

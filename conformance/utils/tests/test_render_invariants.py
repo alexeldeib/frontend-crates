@@ -238,10 +238,12 @@ def test_unaligned_candidates_show_no_per_chunk_timing(rendered_page):
     # the TC stream tab's v1 jail column (emission-packed capture) must be noted too.
     # The jail dir carries its capture-time v1 crate version — derive the candidate
     # slug from the fixture tree rather than hardcoding it.
-    jail_dir = next(
-        (d for d in sorted(STREAM_SRC.glob("dynamo_rust-*"))
-         if d.is_dir() and not d.name.startswith("dynamo_rust-0.")),
-        None,
+    jail_dirs = [
+        d for d in STREAM_SRC.glob("dynamo_rust-*")
+        if d.is_dir() and not d.name.startswith("dynamo_rust-0.")
+    ]
+    jail_dir = max(
+        jail_dirs, key=lambda d: [int(x) for x in re.findall(r"\d+", d.name)], default=None
     )
     assert jail_dir is not None, "v1 jail stream reference dir missing"
     jail_key = jail_dir.name.replace(".", "-")

@@ -32,17 +32,25 @@ pytestmark = pytest.mark.skipif(
 )
 
 def _dynamo_key(v2: bool) -> str:
-    """Candidate key of a Dynamo stream capture dir, whatever its capture-time crate
-    version: `dynamo_rust-0.x` = the v2 stream parser, the v1-major dir = the jail."""
+    """Candidate key of the LATEST Dynamo stream capture dir per generation
+    (`dynamo_rust-0.x` = the v2 stream parser, v1-major = the jail); older
+    version dirs are capture history and render as extra candidates."""
     root = Path(
         os.environ.get("CONFORMANCE_FIXTURES_ROOT")
         or Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
         / "dynamo/conformance-fixtures"
     )
-    for d in sorted((root / "toolcalling/fixtures-stream-v2").glob("dynamo_rust-*")):
-        if d.is_dir() and d.name.startswith("dynamo_rust-0.") == v2:
-            return d.name.replace(".", "-")
-    pytest.skip("dynamo stream fixture dirs not cached", allow_module_level=True)
+    import re as _re
+    dirs = [
+        d for d in (root / "toolcalling/fixtures-stream-v2").glob("dynamo_rust-*")
+        if d.is_dir() and d.name.startswith("dynamo_rust-0.") == v2
+    ]
+    latest = max(
+        dirs, key=lambda d: [int(x) for x in _re.findall(r"\d+", d.name)], default=None
+    )
+    if latest is None:
+        pytest.skip("dynamo stream fixture dirs not cached", allow_module_level=True)
+    return latest.name.replace(".", "-")
 
 
 V2_KEY = _dynamo_key(v2=True)

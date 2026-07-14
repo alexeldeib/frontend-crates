@@ -9,13 +9,12 @@ parser output changes — the parity tests compare the live parsers against them
 
 Modes (any subset; default all):
   batch            fixtures-batch-v1/dynamo-<v1 crate ver>/       (expected.dynamo,
-                   via the record_dynamo_batch bin — the v1 batch parser). Replaces
-                   any existing dynamo-* dir: the Dynamo golden is singular, the
-                   parity tests read "the (single) dynamo-<version>/ dir".
+                   via the record_dynamo_batch bin — the v1 batch parser).
   stream           fixtures-stream-v2/dynamo_rust-<v2 crate ver>/ (per-chunk
                    expected, via record_dynamo_stream — the v2 stream parser).
-                   Replaces the previous v2-major (0.x) dir; the v1-major
-                   dynamo_rust-3.x jail reference dir is historical and kept.
+                   Both write the CURRENT crate version's dir and leave every
+                   other version dir in place: old captures are history the
+                   chart compares as candidates; readers resolve ascending.
   batch-on-stream  fixtures-batch-on-stream-v2/<family>/*.yaml    (the dynamo_rust
                    case blocks + captured_with stamp, via record_batch_via_stream —
                    the v2 stream parser fed each batch sample as one chunk).
@@ -148,10 +147,12 @@ def _assemble_jail_chunks(chunks: list) -> dict:
 def refresh_batch(v1_ver: str) -> None:
     tree = ensure_tree("fixtures-batch-v1")
     inputs = tree / "inputs"
+    # The current-version dir is (re)written in place; OLDER version dirs are
+    # capture history and MUST stay — the chart compares them as candidates and
+    # readers resolve versions ascending (never delete an existing version).
     out_root = tree / f"dynamo-{v1_ver}"
-    for old in tree.glob("dynamo-*"):
-        print(f"[batch] removing {old.name}")
-        shutil.rmtree(old)
+    if out_root.is_dir():
+        shutil.rmtree(out_root)
     header = SPDX + [
         f"# Full anchor for dynamo@{v1_ver} (lowest version = baseline). expected.dynamo only."
     ]
@@ -217,11 +218,12 @@ def refresh_batch(v1_ver: str) -> None:
 def refresh_stream(v2_ver: str) -> None:
     tree = ensure_tree("fixtures-stream-v2")
     inputs = tree / "inputs"
+    # The current-version dir is (re)written in place; OLDER version dirs
+    # (earlier 0.x v2 captures, the v1-major jail references) are capture
+    # history and MUST stay — never delete an existing version.
     out_root = tree / f"dynamo_rust-{v2_ver}"
-    # Replace the previous v2 capture (major 0); the v1-major jail reference stays.
-    for old in tree.glob("dynamo_rust-0.*"):
-        print(f"[stream] removing {old.name}")
-        shutil.rmtree(old)
+    if out_root.is_dir():
+        shutil.rmtree(out_root)
     n_cases = 0
     for family in V2_FAMILIES:
         fam_dir = inputs / family

@@ -2120,10 +2120,11 @@ def _dynamo_v2_version() -> str | None:
     captured data. Reading the live crate makes the label drift ahead — the page would
     show 0.1.16 in one place and the real captured 0.1.11 in another the moment the crate
     is bumped before a re-capture/republish."""
+    latest = None
     for v in _stream_impl_versions().get(BASELINE_IMPL, []):
         if _dynamo_vtag(v) == "v2":
-            return v
-    return None
+            latest = v  # versions are ascending; keep the LAST v2-generation dir
+    return latest
 
 
 def _v2_display_version(impl: str) -> str | None:

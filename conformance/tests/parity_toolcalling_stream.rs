@@ -317,29 +317,24 @@ fn emitted_from_result(result: ToolParseResult) -> Vec<EmittedDelta> {
 #[test]
 fn toolcalling_stream_parity() {
     // Versioned corpus: shared chunks in inputs/, Dynamo's expected in the
-    // dynamo_rust-<version>/ dirs. This test drives the Dynamo parser *v2*, so fold in
-    // the lowest dynamo_rust version (the v2 crate, 0.1.11) — the higher 3.0.0 dir is
-    // the v1 jail candidate, tested elsewhere.
+    // dynamo_rust-<version>/ dirs. This test drives the Dynamo parser *v2*, so fold
+    // in the v2-generation dirs (major 0 — old versions are capture history, folded
+    // ASCENDING so the latest capture wins per case). The v1-major dirs are the
+    // jail+batch reference candidates, tested elsewhere.
     let sv2 = common::ensure_fixtures().join("toolcalling/fixtures-stream-v2");
     let inputs_root = sv2.join("inputs");
-    let ver_key = |p: &Path| -> Vec<u64> {
-        p.file_name()
-            .and_then(|n| n.to_str())
-            .and_then(|n| n.strip_prefix("dynamo_rust-"))
-            .map(|v| v.split('.').map(|x| x.parse().unwrap_or(0)).collect())
-            .unwrap_or_default()
-    };
-    let dyn_dir = std::fs::read_dir(sv2)
-        .unwrap()
-        .filter_map(|e| e.ok().map(|e| e.path()))
+    let dyn_dirs: Vec<_> = common::version_dirs_ascending(&sv2, "dynamo_rust-")
+        .into_iter()
         .filter(|p| {
-            p.is_dir()
-                && p.file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|n| n.starts_with("dynamo_rust-"))
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("dynamo_rust-0."))
         })
-        .min_by_key(|p| ver_key(p))
-        .expect("no dynamo_rust-<version> dir under fixtures-stream-v2");
+        .collect();
+    assert!(
+        !dyn_dirs.is_empty(),
+        "no dynamo_rust-0.x (v2) dir under fixtures-stream-v2"
+    );
     let mut files = Vec::new();
     collect_yaml(&inputs_root, &mut files);
     files.sort();
@@ -363,7 +358,9 @@ fn toolcalling_stream_parity() {
             }
         };
         let rel = path.strip_prefix(&inputs_root).unwrap();
-        merge_dynamo(&mut fx, &dyn_dir, rel);
+        for dyn_dir in &dyn_dirs {
+            merge_dynamo(&mut fx, dyn_dir, rel);
+        }
         if !matches!(fx.mode.as_deref(), Some("stream" | "streamv2")) {
             continue;
         }

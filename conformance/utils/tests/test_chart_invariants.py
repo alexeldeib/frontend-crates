@@ -40,27 +40,31 @@ def _cache_root() -> Path:
 _HAVE_FIXTURES = (_cache_root() / "toolcalling").is_dir()
 
 
+def _ver_key(d: Path) -> list[int]:
+    return [int(x) for x in re.findall(r"\d+", d.name.split("-", 1)[1])]
+
+
 def _dynamo_v2_stream_dir() -> Path | None:
-    """The Dynamo v2 stream capture dir (`dynamo_rust-0.x`), whatever its
-    capture-time version — the v1-major dir is the jail reference, not v2."""
+    """The LATEST Dynamo v2 stream capture dir (`dynamo_rust-0.x`) — older 0.x
+    dirs are capture history; the v1-major dirs are the jail reference, not v2."""
     sv2 = _cache_root() / "toolcalling/fixtures-stream-v2"
     if not sv2.is_dir():
         return None
-    for d in sorted(sv2.glob("dynamo_rust-0.*")):
-        if d.is_dir():
-            return d
-    return None
+    dirs = [d for d in sv2.glob("dynamo_rust-0.*") if d.is_dir()]
+    return max(dirs, key=_ver_key, default=None)
 
 
 def _dynamo_v1_jail_stream_dir() -> Path | None:
-    """The Dynamo v1 jail+batch stream reference dir (`dynamo_rust-<v1 major>`)."""
+    """The LATEST Dynamo v1 jail+batch stream reference dir
+    (`dynamo_rust-<v1 major>`) — older v1-major dirs are capture history."""
     sv2 = _cache_root() / "toolcalling/fixtures-stream-v2"
     if not sv2.is_dir():
         return None
-    for d in sorted(sv2.glob("dynamo_rust-*")):
-        if d.is_dir() and not d.name.startswith("dynamo_rust-0."):
-            return d
-    return None
+    dirs = [
+        d for d in sv2.glob("dynamo_rust-*")
+        if d.is_dir() and not d.name.startswith("dynamo_rust-0.")
+    ]
+    return max(dirs, key=_ver_key, default=None)
 pytestmark = pytest.mark.skipif(
     not _HAVE_FIXTURES, reason="fixtures not downloaded (run download_fixtures.py)"
 )
@@ -337,7 +341,9 @@ def test_dynamo_version_labels_are_consistent_and_from_fixtures(charts):
     for page in ("v1", "v2"):
         for tag, expected in (("Dynamo v1 Rust", fixture_v1), ("Dynamo v2 Rust", fixture_v2)):
             seen = set(re.findall(rf"{tag} (\S+) \(", charts[page]))
-            assert len(seen) <= 1, f"{page}: {tag} has inconsistent versions: {seen}"
+            # Multiple versions per tag are expected — capture HISTORY renders as
+            # per-version candidates (like the vLLM 0.23/0.24 peers). The invariant
+            # is provenance: every shown version must exist as a captured dir.
             if seen and expected:
                 assert seen <= expected, (
                     f"{page}: {tag} version {seen} is not a captured fixture version "
