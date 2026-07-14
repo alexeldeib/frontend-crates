@@ -38,6 +38,29 @@ def _cache_root() -> Path:
 
 
 _HAVE_FIXTURES = (_cache_root() / "toolcalling").is_dir()
+
+
+def _dynamo_v2_stream_dir() -> Path | None:
+    """The Dynamo v2 stream capture dir (`dynamo_rust-0.x`), whatever its
+    capture-time version — the v1-major dir is the jail reference, not v2."""
+    sv2 = _cache_root() / "toolcalling/fixtures-stream-v2"
+    if not sv2.is_dir():
+        return None
+    for d in sorted(sv2.glob("dynamo_rust-0.*")):
+        if d.is_dir():
+            return d
+    return None
+
+
+def _dynamo_v1_jail_stream_dir() -> Path | None:
+    """The Dynamo v1 jail+batch stream reference dir (`dynamo_rust-<v1 major>`)."""
+    sv2 = _cache_root() / "toolcalling/fixtures-stream-v2"
+    if not sv2.is_dir():
+        return None
+    for d in sorted(sv2.glob("dynamo_rust-*")):
+        if d.is_dir() and not d.name.startswith("dynamo_rust-0."):
+            return d
+    return None
 pytestmark = pytest.mark.skipif(
     not _HAVE_FIXTURES, reason="fixtures not downloaded (run download_fixtures.py)"
 )
@@ -146,7 +169,12 @@ def test_v2_batch_tab_has_all_peer_versions(charts):
 
 def test_v2_stream_tab_has_v1jail_reference_and_v2_and_peers(charts):
     seg = _panel(charts["v2"], "tab-toolcalling-streamv2", _V2_TABS)
-    assert "Dynamo v1 Rust 3.0.0 (jail+batch)" in seg, "v2 stream tab lost its v1-jail reference"
+    jail_dir = _dynamo_v1_jail_stream_dir()
+    assert jail_dir is not None, "v1 jail stream reference dir missing"
+    jail_ver = jail_dir.name.split("-", 1)[1]
+    assert f"Dynamo v1 Rust {jail_ver} (jail+batch)" in seg, (
+        "v2 stream tab lost its v1-jail reference"
+    )
     assert "Dynamo v2 Rust" in seg and "(stream)" in seg, "v2 stream tab lost the Dynamo v2 candidate"
     for impl, vers in _peer_versions("toolcalling/fixtures-stream-v2").items():
         if impl in ("dynamo_rust",):
@@ -164,8 +192,8 @@ def test_v2_reference_aware_not_implemented_map(charts):
     # case-level "not applicable".
     import json
 
-    v2_dir = _cache_root() / "toolcalling/fixtures-stream-v2/dynamo_rust-0.1.11"
-    if not v2_dir.is_dir():
+    v2_dir = _dynamo_v2_stream_dir()
+    if v2_dir is None:
         pytest.skip("v2 stream fixture dir not present")
     fams = sorted(d.name for d in v2_dir.iterdir() if d.is_dir())
     html = charts["v2"]
@@ -182,7 +210,7 @@ def test_v2_reference_aware_not_implemented_map(charts):
 
 
 def test_v2_stream_parser_only_covers_implemented_families(charts):
-    # The Dynamo v2 stream parser (dynamo_rust-0.1.11) implements only a handful of
+    # The Dynamo v2 stream parser (dynamo_rust-0.x) implements only a subset of the
     # families; its fixture dir holds exactly those. The stream assembly defaults an
     # absent impl to an empty-but-present block, which used to paint the v2 candidate
     # green on EVERY family. Guard: the v2 stream candidate must be `na` on the
@@ -190,16 +218,16 @@ def test_v2_stream_parser_only_covers_implemented_families(charts):
     import json
     from html import unescape
 
-    v2_dir = _cache_root() / "toolcalling/fixtures-stream-v2/dynamo_rust-0.1.11"
-    if not v2_dir.is_dir():
+    v2_dir = _dynamo_v2_stream_dir()
+    if v2_dir is None:
         pytest.skip("v2 stream fixture dir not present")
     n_v2_families = len([d for d in v2_dir.iterdir() if d.is_dir()])
-    n_all_families = len(
-        [d for d in (_cache_root() / "toolcalling/fixtures-stream-v2/dynamo_rust-3.0.0").iterdir()
-         if d.is_dir()]
-    )
+    v1_jail_dir = _dynamo_v1_jail_stream_dir()
+    assert v1_jail_dir is not None, "v1 jail stream reference dir missing"
+    n_all_families = len([d for d in v1_jail_dir.iterdir() if d.is_dir()])
     assert n_v2_families < n_all_families, "expected v2 to implement fewer families than v1 jail"
 
+    v2_key = v2_dir.name.replace(".", "-")
     seg = _panel(charts["v2"], "tab-toolcalling-streamv2", _V2_TABS)
     present = na = 0
     for blob in re.findall(r'data-cmp="([^"]+)"', seg):
@@ -207,7 +235,7 @@ def test_v2_stream_parser_only_covers_implemented_families(charts):
             cmp = json.loads(unescape(blob))
         except json.JSONDecodeError:
             continue
-        v = cmp.get("dynamo_rust-0-1-11")
+        v = cmp.get(v2_key)
         if v is None:
             continue
         if v.get("na") == 1:

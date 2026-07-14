@@ -1,12 +1,12 @@
 {
-  "snapshot": "20260708_190827",
-  "created_pt": "2026-07-08 19:08:27 America/Los_Angeles",
+  "snapshot": "20260713_194817",
+  "created_pt": "2026-07-13 19:48:17 America/Los_Angeles",
   "hf_repo": "ai-dynamo/conformance-fixtures",
-  "all_tarball": "all-20260708_190827.tar.gz",
-  "all_sha256": "6f77d3a12e087ba80bcf43eb067625b2b4085f8d67c17a1a5ff933db0707b110",
+  "all_tarball": "all-20260713_194817.tar.gz",
+  "all_sha256": "522e8bbc3743e228a1af2d844d6b92ba717f2e8bc3b9e34b4bc0cae774584aa8",
   "crates": {
-    "dynamo-parsers": "4.1.0",
-    "dynamo-parsers-v2": "0.1.16"
+    "dynamo-parsers": "5.0.0",
+    "dynamo-parsers-v2": "0.1.19"
   },
   "peers": {
     "vllm": "0.24.0",
@@ -14,9 +14,9 @@
   },
   "shards": [
     {
-      "path": "toolcalling/fixtures-batch-v1/dynamo-3.0.0.tar.gz",
-      "sha256": "495945e2657feb6ef7bd3b5347250fa102baf9016830aae37c77b49c2dd3d1ff",
-      "size": 10678
+      "path": "toolcalling/fixtures-batch-v1/dynamo-5.0.0.tar.gz",
+      "sha256": "c60b9d993b0164873cf245f0c993cd3b5e32a71b57306353f08b8d1c70d42302",
+      "size": 10017
     },
     {
       "path": "toolcalling/fixtures-batch-v1/inputs.tar.gz",
@@ -44,14 +44,14 @@
       "size": 2255
     },
     {
-      "path": "toolcalling/fixtures-stream-v2/dynamo_rust-0.1.11.tar.gz",
-      "sha256": "ab3d41e056b00b114874a63c1c9d88d073b818224df20b4bdf5ff23f84f76718",
-      "size": 2834
+      "path": "toolcalling/fixtures-stream-v2/dynamo_rust-0.1.19.tar.gz",
+      "sha256": "6353f2e56d4d41f7c7859dbe8bebb77002ee619bacdf00cb075ef10555a38849",
+      "size": 5374
     },
     {
-      "path": "toolcalling/fixtures-stream-v2/dynamo_rust-3.0.0.tar.gz",
-      "sha256": "3dc4878480d7512d8c574e5d22608c45657290427ef1a9cc1e199a5a006a8cae",
-      "size": 10812
+      "path": "toolcalling/fixtures-stream-v2/dynamo_rust-5.0.0.tar.gz",
+      "sha256": "94f8dc6e686c0f8203bd8111bd6678b76992dabebea877aa766fc5d6ce3d8e32",
+      "size": 10871
     },
     {
       "path": "toolcalling/fixtures-stream-v2/inputs.tar.gz",
@@ -100,8 +100,8 @@
     },
     {
       "path": "toolcalling/fixtures-batch-on-stream-v2.tar.gz",
-      "sha256": "ddfdf0b26d5239197d8d873173b991373cd5c98dc9f1dd2f1fef8c1305b65212",
-      "size": 14100
+      "sha256": "6a235386fb6621824dd8f32d021e154ceb77d9f9b1d5a126e06ad1aca433fa64",
+      "size": 14689
     }
   ]
 }

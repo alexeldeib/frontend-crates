@@ -89,32 +89,33 @@ fn toolcalling_batch_via_stream_parity() {
     // The DSv4 stream parser now buffers each invoke until `</｜DSML｜invoke>` and
     // drops a call truncated before its close (v1 parity), so the former 5.c /
     // 5.e truncation divergences are gone. Remaining entries:
-    //   deepseek_v4 5.g: bare invoke after prose — the stream parser recovers it
-    //        while the strict batch parser drops it (recovery divergence).
-    //   gemma4 / kimi_k2 / glm47 / minimax_m2 / qwen3_coder (calls IDENTICAL,
-    //        normal_text only): the streaming parser faithfully emits the model's
-    //        text AROUND the tool calls VERBATIM, while the v1 batch parser trims
-    //        surrounding whitespace that would otherwise be the entire (or a
-    //        trailing) normal_text. The calls always match; only whitespace-only
-    //        surrounding text differs. e.g. gemma4 8.b stream "  Let me know if you
-    //        need more." vs batch ""; the XML families' 2.a/2.b/2.d/10 (parallel
-    //        calls separated only by a newline) stream "\n" vs batch ""; qwen3 5.d/
-    //        5.e keep one extra trailing "\n" the batch parser trims. The streaming
-    //        peers stream this surrounding text the same way, and the HTML
-    //        batch-on-stream tab compares calls only, so these render green there.
+    //   deepseek_v4 / gemma4 / kimi_k2 5.g: bare invoke after prose — the stream
+    //        parser recovers it while the strict batch parser drops it (recovery
+    //        divergence).
+    //   gemma4 8.a/8.b/8.d (calls IDENTICAL, normal_text only): the streaming
+    //        parser faithfully emits the model's text AROUND the tool calls
+    //        VERBATIM, while the v1 batch parser's gemma4 recovery path drops the
+    //        surrounding prose, e.g. 8.b stream "  Let me know if you need more."
+    //        vs batch "".
+    //   *:9.b (whitespace-only input "   ", no calls): the streaming parsers pass
+    //        the bare whitespace through as normal_text while the v1 batch parser
+    //        returns "" — except harmony, where it is INVERTED (the harmony stream
+    //        parser holds bare whitespace back, the v1 batch parser returns it).
+    //   The streaming peers stream surrounding text the same way, and the HTML
+    //   batch-on-stream tab compares calls only, so all of these render green there.
     let known_divergences: std::collections::BTreeSet<&str> = [
         "deepseek_v4:TOOLCALLING.batch.5.g",
+        "deepseek_v4:TOOLCALLING.batch.9.b",
         "gemma4:TOOLCALLING.batch.5.g",
         "gemma4:TOOLCALLING.batch.8.a",
         "gemma4:TOOLCALLING.batch.8.b",
         "gemma4:TOOLCALLING.batch.8.d",
+        "gemma4:TOOLCALLING.batch.9.b",
+        "glm47:TOOLCALLING.batch.9.b",
+        "harmony:TOOLCALLING.batch.9.b",
         "kimi_k2:TOOLCALLING.batch.5.g",
-        "minimax_m2:TOOLCALLING.batch.2.b",
-        "qwen3_coder:TOOLCALLING.batch.2.a",
-        "qwen3_coder:TOOLCALLING.batch.2.d",
-        "qwen3_coder:TOOLCALLING.batch.5.d",
-        "qwen3_coder:TOOLCALLING.batch.5.e",
-        "qwen3_coder:TOOLCALLING.batch.10",
+        "kimi_k2:TOOLCALLING.batch.9.b",
+        "minimax_m2:TOOLCALLING.batch.9.b",
     ]
     .into_iter()
     .collect();
