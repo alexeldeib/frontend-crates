@@ -274,8 +274,8 @@ impl From<HfTokenizer> for HuggingFaceTokenizer {
 mod byte_fallback_stream_tests {
     use super::*;
 
-    fn tokenizer() -> super::super::Tokenizer {
-        let hf: HfTokenizer = serde_json::from_value(serde_json::json!({
+    fn hf_tokenizer() -> HfTokenizer {
+        serde_json::from_value(serde_json::json!({
             "version": "1.0", "truncation": null, "padding": null,
             "added_tokens": [{"id": 6, "content": "<eos>", "special": true,
                 "single_word": false, "lstrip": false, "rstrip": false, "normalized": false}],
@@ -286,8 +286,70 @@ mod byte_fallback_stream_tests {
                 "<0x61>": 0, "<0xF5>": 1, "<0xC3>": 2, "<0xA9>": 3,
                 " hello": 4, "!": 5, "<eos>": 6}, "merges": [], "byte_fallback": true}
         }))
-        .unwrap();
-        std::sync::Arc::new(HuggingFaceTokenizer::from_tokenizer(hf)).into()
+        .unwrap()
+    }
+
+    fn tokenizer() -> super::super::Tokenizer {
+        std::sync::Arc::new(HuggingFaceTokenizer::from_tokenizer(hf_tokenizer())).into()
+    }
+
+    #[test]
+    fn byte_fallback_checkpoint_preserves_pending_text_and_context() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        serde_json::to_writer(file.as_file(), &hf_tokenizer()).unwrap();
+        let fast: crate::Tokenizer = std::sync::Arc::new(
+            crate::fastokens::FastTokenizer::from_file(file.path().to_str().unwrap()).unwrap(),
+        )
+        .into();
+        for tokenizer in [tokenizer(), fast] {
+            let cached =
+                crate::CachedTokenizer::new(tokenizer.0.clone(), vec!["<eos>".into()], 1024)
+                    .unwrap();
+            for tokenizer in [tokenizer, std::sync::Arc::new(cached).into()] {
+                for skip in [false, true] {
+                    for (prompt, initial, pending, continuation) in [
+                        (vec![], vec![], vec![0], vec![4]),
+                        (vec![4], vec![], vec![2], vec![3]),
+                        (vec![4], vec![5, 5], vec![0], vec![1, 4]),
+                        (vec![4], vec![5], vec![2, 3], vec![]),
+                        (vec![4], vec![5], vec![0, 6, 1], vec![4]),
+                    ] {
+                        let mut original = tokenizer.decode_stream(&prompt, skip);
+                        assert_eq!(original.checkpoint(), None);
+                        for id in &initial {
+                            original.step(*id).unwrap();
+                        }
+                        assert_eq!(original.checkpoint(), None);
+                        for id in &pending {
+                            original.step(*id).unwrap();
+                        }
+                        let checkpoint = original.checkpoint().unwrap();
+                        if initial.len() > 1 {
+                            assert_eq!(checkpoint.token_ids.len(), pending.len() + 1);
+                        }
+                        let retry_prompt: Vec<_> = prompt
+                            .iter()
+                            .chain(&initial)
+                            .chain(&pending)
+                            .copied()
+                            .collect();
+                        // The checkpoint restores the skip flag as well as offsets.
+                        let mut resumed = tokenizer.decode_stream(&retry_prompt, !skip);
+                        resumed.restore_checkpoint(checkpoint);
+                        let mut expected = String::new();
+                        let mut actual = String::new();
+                        for id in continuation {
+                            expected.push_str(&original.step(id).unwrap().unwrap_or_default());
+                            actual.push_str(&resumed.step(id).unwrap().unwrap_or_default());
+                        }
+                        expected.push_str(&original.finish().unwrap().unwrap_or_default());
+                        actual.push_str(&resumed.finish().unwrap().unwrap_or_default());
+                        assert_eq!(actual, expected, "pending={pending:?}, skip={skip}");
+                        assert_eq!(resumed.finish().unwrap(), None);
+                    }
+                }
+            }
+        }
     }
 
     #[test]

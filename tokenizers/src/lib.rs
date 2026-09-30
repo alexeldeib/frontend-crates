@@ -498,6 +498,17 @@ pub struct DecodeStream {
     has_emitted: bool,
 }
 
+/// Opaque pending detokenization state for a retry using the same tokenizer.
+/// Includes the stable context needed to decode the pending suffix; it does not
+/// represent new generated tokens or change generation accounting.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DecodeStreamCheckpoint {
+    token_ids: Vec<u32>,
+    read_offset: usize,
+    has_emitted: bool,
+    skip_special_tokens: bool,
+}
+
 impl DecodeStream {
     pub fn new(
         tokenizer: Arc<dyn traits::Tokenizer>,
@@ -519,6 +530,27 @@ impl DecodeStream {
             read_offset: num_input_tokens,
             has_emitted: false,
         }
+    }
+
+    /// Snapshot only when text is still pending. Discard obsolete history while
+    /// preserving the stable prefix used for decoding and the append-only guard.
+    pub fn checkpoint(&self) -> Option<DecodeStreamCheckpoint> {
+        (self.read_offset < self.all_token_ids.len()).then(|| DecodeStreamCheckpoint {
+            token_ids: self.all_token_ids[self.prefix_offset..].to_vec(),
+            read_offset: self.read_offset - self.prefix_offset,
+            has_emitted: self.has_emitted,
+            skip_special_tokens: self.skip_special_tokens,
+        })
+    }
+
+    /// Resume pending text on a fresh stream using the same tokenizer. This
+    /// replaces the fresh stream's prompt context with the checkpoint context.
+    pub fn restore_checkpoint(&mut self, checkpoint: DecodeStreamCheckpoint) {
+        self.all_token_ids = checkpoint.token_ids;
+        self.prefix_offset = 0;
+        self.read_offset = checkpoint.read_offset;
+        self.has_emitted = checkpoint.has_emitted;
+        self.skip_special_tokens = checkpoint.skip_special_tokens;
     }
 
     /// Step appends a token_id to the internal state and tries to produce a text chunk.
@@ -628,6 +660,10 @@ mod decode_stream_unicode_tests {
     }
 
     impl super::traits::Decoder for RewritingTokenizer {
+        fn has_unstable_suffix(&self, token_ids: &[TokenIdType], _: bool) -> bool {
+            token_ids.last() == Some(&99)
+        }
+
         fn decode(
             &self,
             token_ids: &[TokenIdType],
@@ -691,6 +727,28 @@ mod decode_stream_unicode_tests {
         }
     }
 
+    #[test]
+    fn byte_fallback_checkpoint_preserves_append_only_guard() {
+        let tokenizer: Arc<dyn super::traits::Tokenizer> = Arc::new(RewritingTokenizer {
+            prefix_text: "abc",
+            rewritten_text: "unrelated",
+            prefix_is_partial: false,
+        });
+        let mut stream = DecodeStream::new(tokenizer.clone(), &[], false);
+        assert_eq!(stream.step(1).unwrap().as_deref(), Some("abc"));
+        assert_eq!(stream.step(99).unwrap(), None);
+        let mut resumed = DecodeStream::new(tokenizer, &[1, 99], false);
+        resumed.restore_checkpoint(stream.checkpoint().unwrap());
+        for stream in [&mut stream, &mut resumed] {
+            assert!(
+                stream
+                    .step(2)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("already emitted text")
+            );
+        }
+    }
     #[test]
     fn allows_boundary_recovery_before_generated_text_is_emitted() {
         for (prefix_text, rewritten_text, expected) in [
